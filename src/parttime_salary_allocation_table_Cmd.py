@@ -186,6 +186,7 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
 
     objOutputRows: List[List[str]] = []
     pszCurrentStaffName: str = ""
+    pszLastOutputStaffName: str = ""
     for objRow in objRows:
         if not any(not is_blank_text(pszCell) for pszCell in objRow):
             continue
@@ -203,7 +204,13 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
         if pszProjectName == "" and pszManhour == "":
             continue
 
-        objOutputRows.append([pszCurrentStaffName, pszProjectName, pszManhour])
+        pszOutputStaffName: str = pszCurrentStaffName
+        if pszCurrentStaffName == pszLastOutputStaffName:
+            pszOutputStaffName = ""
+        else:
+            pszLastOutputStaffName = pszCurrentStaffName
+
+        objOutputRows.append([pszOutputStaffName, pszProjectName, pszManhour])
 
     if not objOutputRows:
         raise ValueError("No output rows generated for Jobcan long-format TSV")
