@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+from datetime import timedelta
 from pathlib import Path
 from typing import List
 
@@ -56,9 +57,22 @@ def build_unique_output_path(
         iSuffix += 1
 
 
+def format_timedelta_as_h_mm_ss(objDuration: timedelta) -> str:
+    iTotalSeconds: int = int(objDuration.total_seconds())
+    iSign: int = -1 if iTotalSeconds < 0 else 1
+    iAbsTotalSeconds: int = abs(iTotalSeconds)
+    iHours: int = iAbsTotalSeconds // 3600
+    iMinutes: int = (iAbsTotalSeconds % 3600) // 60
+    iSeconds: int = iAbsTotalSeconds % 60
+    pszPrefix: str = "-" if iSign < 0 else ""
+    return f"{pszPrefix}{iHours}:{iMinutes:02d}:{iSeconds:02d}"
+
+
 def normalize_cell_value(objValue: object) -> str:
     if objValue is None:
         return ""
+    if isinstance(objValue, timedelta):
+        return format_timedelta_as_h_mm_ss(objValue)
     pszText: str = str(objValue)
     return pszText.replace("\t", "_")
 
