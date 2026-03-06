@@ -12,6 +12,12 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+SALARY_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
+    r"^給与配賦アルバイト_step0001_(\d{4}年\d{2}月)\.tsv$"
+)
+STAFF_MANHOUR_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
+    r"^スタッフ別工数_step0001_(\d{4}年\d{2}月)\.tsv$"
+)
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -110,6 +116,18 @@ def extract_year_month_text_from_path(objInputPath: Path) -> str:
     iYear: int = 2000 + int(objMatch.group(1))
     iMonth: int = int(objMatch.group(2))
     return f"{iYear}年{iMonth:02d}月"
+
+
+def extract_year_month_text_from_step0001_file_name(pszFileName: str) -> str | None:
+    objSalaryMatch = SALARY_STEP0001_FILE_PATTERN.match(pszFileName)
+    if objSalaryMatch is not None:
+        return objSalaryMatch.group(1)
+
+    objStaffManhourMatch = STAFF_MANHOUR_STEP0001_FILE_PATTERN.match(pszFileName)
+    if objStaffManhourMatch is not None:
+        return objStaffManhourMatch.group(1)
+
+    return None
 
 
 def get_effective_column_count(objRow: List[str]) -> int:
@@ -237,6 +255,54 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     return 0
 
 
+def process_staff_manhour_step0002_from_step0001_pair(
+    objSalaryStep0001Path: Path,
+    objStaffManhourStep0001Path: Path,
+) -> int:
+    pszSalaryYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+        objSalaryStep0001Path.name
+    )
+    pszStaffManhourYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+        objStaffManhourStep0001Path.name
+    )
+    if pszSalaryYearMonthText is None or pszStaffManhourYearMonthText is None:
+        raise ValueError("Could not extract year-month from step0001 file names")
+    if pszSalaryYearMonthText != pszStaffManhourYearMonthText:
+        raise ValueError("Year-month mismatch between salary and staff-manhour step0001 files")
+
+    objSalaryRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
+    if not objSalaryRows:
+        raise ValueError(f"Input TSV has no rows: {objSalaryStep0001Path}")
+
+    objAllowedStaffNames: set[str] = {
+        (pszCell or "").strip()
+        for pszCell in objSalaryRows[0]
+        if (pszCell or "").strip() != ""
+    }
+    if not objAllowedStaffNames:
+        raise ValueError(f"No staff names found in first row: {objSalaryStep0001Path}")
+
+    objStaffManhourRows: List[List[str]] = read_tsv_rows(objStaffManhourStep0001Path)
+    if not objStaffManhourRows:
+        raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0001Path}")
+
+    objOutputRows: List[List[str]] = []
+    for objRow in objStaffManhourRows:
+        pszStaffName: str = (objRow[0] if objRow else "").strip()
+        if pszStaffName in objAllowedStaffNames:
+            objOutputRows.append(objRow)
+
+    if not objOutputRows:
+        raise ValueError("No rows remained after filtering by salary step0001 first-row staff names")
+
+    objOutputPath: Path = (
+        objStaffManhourStep0001Path.resolve().parent
+        / f"スタッフ別工数_step0002_{pszStaffManhourYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_single_input(pszInputXlsxPath: str) -> int:
     objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
     pszSuffix: str = objResolvedInputPath.suffix.lower()
@@ -292,8 +358,58 @@ def main() -> int:
     objArgs: argparse.Namespace = objParser.parse_args()
 
     iExitCode: int = 0
+    objHandledInputPaths: set[Path] = set()
+
+    objSalaryStep0001ByYearMonth: dict[str, Path] = {}
+    objStaffManhourStep0001ByYearMonth: dict[str, Path] = {}
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
+            objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
+        except Exception:
+            continue
+
+        pszYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+            objResolvedInputPath.name
+        )
+        if pszYearMonthText is None:
+            continue
+
+        objSalaryMatch = SALARY_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name)
+        if objSalaryMatch is not None:
+            objSalaryStep0001ByYearMonth[pszYearMonthText] = objResolvedInputPath
+
+        objStaffManhourMatch = STAFF_MANHOUR_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name)
+        if objStaffManhourMatch is not None:
+            objStaffManhourStep0001ByYearMonth[pszYearMonthText] = objResolvedInputPath
+
+    for pszYearMonthText, objSalaryStep0001Path in objSalaryStep0001ByYearMonth.items():
+        objStaffManhourStep0001Path: Path | None = objStaffManhourStep0001ByYearMonth.get(
+            pszYearMonthText
+        )
+        if objStaffManhourStep0001Path is None:
+            continue
+        try:
+            process_staff_manhour_step0002_from_step0001_pair(
+                objSalaryStep0001Path,
+                objStaffManhourStep0001Path,
+            )
+            objHandledInputPaths.add(objSalaryStep0001Path.resolve())
+            objHandledInputPaths.add(objStaffManhourStep0001Path.resolve())
+        except Exception as objException:
+            print(
+                "Error: failed to process step0002 pair: {0} / {1}. Detail = {2}".format(
+                    objSalaryStep0001Path,
+                    objStaffManhourStep0001Path,
+                    objException,
+                )
+            )
+            iExitCode = 1
+
+    for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
+        try:
+            objResolvedInputPath = resolve_existing_input_path(pszInputXlsxPath)
+            if objResolvedInputPath.resolve() in objHandledInputPaths:
+                continue
             process_single_input(pszInputXlsxPath)
         except Exception as objException:
             print(
