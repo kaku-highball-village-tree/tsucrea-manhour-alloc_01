@@ -294,9 +294,18 @@ def process_staff_manhour_step0002_from_step0001_pair(
         raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0001Path}")
 
     objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
     for objRow in objStaffManhourRows:
+        if not objRow:
+            continue
+
         pszStaffName: str = (objRow[0] if objRow else "").strip()
-        if pszStaffName in objAllowedStaffNames:
+        if pszStaffName != "":
+            pszCurrentStaffName = pszStaffName
+        if pszCurrentStaffName == "":
+            continue
+
+        if pszCurrentStaffName in objAllowedStaffNames:
             objOutputRows.append(objRow)
 
     if not objOutputRows:
