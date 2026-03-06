@@ -8,6 +8,7 @@ from typing import List
 
 
 INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
+YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -69,10 +70,73 @@ def write_sheet_to_tsv(objOutputPath: Path, objRows: List[List[object]]) -> None
             objWriter.writerow([normalize_cell_value(objValue) for objValue in objRow])
 
 
+def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
+    objRows: List[List[str]] = []
+    with open(objInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
+        objReader = csv.reader(objFile, delimiter="\t")
+        for objRow in objReader:
+            objRows.append(list(objRow))
+    return objRows
+
+
+def is_blank_text(pszText: str) -> bool:
+    return (pszText or "").strip().replace("\u3000", "") == ""
+
+
+def extract_year_month_text_from_path(objInputPath: Path) -> str:
+    objMatch = YEAR_MONTH_PATTERN.search(str(objInputPath))
+    if objMatch is None:
+        raise ValueError(f"Could not extract YY.MM月 from input path: {objInputPath}")
+    iYear: int = 2000 + int(objMatch.group(1))
+    iMonth: int = int(objMatch.group(2))
+    return f"{iYear}年{iMonth:02d}月"
+
+
+def process_tsv_input(objResolvedInputPath: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
+    if len(objRows) < 2:
+        raise ValueError(f"Input TSV has too few rows: {objResolvedInputPath}")
+
+    objRowsWithoutA: List[List[str]] = [objRow[1:] if len(objRow) >= 1 else [] for objRow in objRows]
+
+    if len(objRowsWithoutA[0]) < 1:
+        raise ValueError("B1 text could not be found after removing column A")
+    pszTitle: str = (objRowsWithoutA[0][0] or "").strip()
+    if pszTitle == "":
+        raise ValueError("B1 text is empty")
+
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    if len(objRowsWithoutA) >= 2:
+        objOutputRows.append(objRowsWithoutA[1])
+    objOutputRows.extend(objRowsWithoutA[3:])
+
+    objFilteredOutputRows: List[List[str]] = []
+    for objRow in objOutputRows:
+        if any(not is_blank_text(pszCell) for pszCell in objRow):
+            objFilteredOutputRows.append(objRow)
+
+    if not objFilteredOutputRows:
+        raise ValueError("No output rows after applying TSV row rules")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"{pszTitle}_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objFilteredOutputRows)
+    return 0
+
+
 def process_single_input(pszInputXlsxPath: str) -> int:
     objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
-    if objResolvedInputPath.suffix.lower() != ".xlsx":
-        raise ValueError(f"Unsupported extension (only .xlsx): {objResolvedInputPath}")
+    pszSuffix: str = objResolvedInputPath.suffix.lower()
+
+    if pszSuffix == ".tsv":
+        return process_tsv_input(objResolvedInputPath)
+
+    if pszSuffix != ".xlsx":
+        raise ValueError(f"Unsupported extension (only .xlsx/.tsv): {objResolvedInputPath}")
 
     objBaseDirectoryPath: Path = objResolvedInputPath.resolve().parent
     pszExcelStem: str = objResolvedInputPath.stem
