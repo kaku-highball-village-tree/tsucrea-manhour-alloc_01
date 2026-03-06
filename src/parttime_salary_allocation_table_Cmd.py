@@ -44,17 +44,8 @@ def build_unique_output_path(
     objUsedPaths: set[Path],
 ) -> Path:
     objOutputPath: Path = objBaseDirectoryPath / f"{pszExcelStem}_{pszSanitizedSheetName}.tsv"
-    if objOutputPath not in objUsedPaths and not objOutputPath.exists():
-        objUsedPaths.add(objOutputPath)
-        return objOutputPath
-
-    iSuffix: int = 2
-    while True:
-        objOutputPath = objBaseDirectoryPath / f"{pszExcelStem}_{pszSanitizedSheetName}_{iSuffix}.tsv"
-        if objOutputPath not in objUsedPaths and not objOutputPath.exists():
-            objUsedPaths.add(objOutputPath)
-            return objOutputPath
-        iSuffix += 1
+    objUsedPaths.add(objOutputPath)
+    return objOutputPath
 
 
 def format_timedelta_as_h_mm_ss(objDuration: timedelta) -> str:
