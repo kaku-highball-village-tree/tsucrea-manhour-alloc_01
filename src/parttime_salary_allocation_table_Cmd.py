@@ -421,6 +421,127 @@ def process_staff_manhour_step0003_from_step0002(
         / f"スタッフ別工数_step0003_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objOutputRows)
+    process_staff_manhour_step0004_from_step0003(objOutputPath, pszYearMonthText)
+    return 0
+
+
+def parse_h_mm_ss_to_seconds(pszManhourText: str) -> int:
+    pszText: str = (pszManhourText or "").strip()
+    objMatch = re.match(r"^(\d+):(\d{2}):(\d{2})$", pszText)
+    if objMatch is None:
+        raise ValueError(f"Invalid manhour text format (expected H:MM:SS): {pszManhourText}")
+
+    iHours: int = int(objMatch.group(1))
+    iMinutes: int = int(objMatch.group(2))
+    iSeconds: int = int(objMatch.group(3))
+    if iMinutes >= 60 or iSeconds >= 60:
+        raise ValueError(f"Invalid manhour text value (minutes/seconds out of range): {pszManhourText}")
+    return iHours * 3600 + iMinutes * 60 + iSeconds
+
+
+def parse_integer_text(pszValueText: str) -> int:
+    pszText: str = (pszValueText or "").strip()
+    if re.match(r"^-?\d+$", pszText) is None:
+        raise ValueError(f"Invalid integer text: {pszValueText}")
+    return int(pszText)
+
+
+def allocate_integer_values_by_ratio(iTotalValue: int, objDurationsInSeconds: List[int]) -> List[int]:
+    if iTotalValue < 0:
+        raise ValueError(f"Total value must be non-negative: {iTotalValue}")
+    if not objDurationsInSeconds:
+        raise ValueError("No duration rows found for allocation")
+
+    iTotalSeconds: int = sum(objDurationsInSeconds)
+    if iTotalSeconds <= 0:
+        raise ValueError("Total duration must be greater than zero for allocation")
+
+    objBaseValues: List[int] = []
+    objRemainders: List[tuple[int, int]] = []
+    iAllocatedBaseSum: int = 0
+    for iIndex, iSeconds in enumerate(objDurationsInSeconds):
+        if iSeconds < 0:
+            raise ValueError("Duration seconds must be non-negative")
+        iNumerator: int = iTotalValue * iSeconds
+        iBaseValue: int = iNumerator // iTotalSeconds
+        iRemainder: int = iNumerator % iTotalSeconds
+        objBaseValues.append(iBaseValue)
+        objRemainders.append((iRemainder, iIndex))
+        iAllocatedBaseSum += iBaseValue
+
+    iDifference: int = iTotalValue - iAllocatedBaseSum
+    if iDifference < 0:
+        raise ValueError("Allocated base sum exceeded total value")
+
+    objRemainders.sort(key=lambda objItem: (-objItem[0], objItem[1]))
+    for iOffset in range(iDifference):
+        _, iTargetIndex = objRemainders[iOffset]
+        objBaseValues[iTargetIndex] += 1
+
+    if sum(objBaseValues) != iTotalValue:
+        raise ValueError("Allocated integer sum does not match total value")
+    return objBaseValues
+
+
+def process_staff_manhour_step0004_from_step0003(
+    objStaffManhourStep0003Path: Path,
+    pszYearMonthText: str,
+) -> int:
+    objStep0003Rows: List[List[str]] = read_tsv_rows(objStaffManhourStep0003Path)
+    if not objStep0003Rows:
+        raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0003Path}")
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objStep0003Rows]
+
+    objCurrentStaffRows: List[int] = []
+    objCurrentStaffDurations: List[int] = []
+    pszCurrentStaffName: str = ""
+    iCurrentStaffTotalValue: int | None = None
+
+    def flush_current_staff_rows() -> None:
+        if not objCurrentStaffRows:
+            return
+        if pszCurrentStaffName == "":
+            raise ValueError("Staff name could not be resolved for step0003 block")
+        if iCurrentStaffTotalValue is None:
+            raise ValueError(f"Total value column is missing for staff: {pszCurrentStaffName}")
+        objAllocatedValues: List[int] = allocate_integer_values_by_ratio(
+            iCurrentStaffTotalValue,
+            objCurrentStaffDurations,
+        )
+        for iRowIndex, iAllocatedValue in zip(objCurrentStaffRows, objAllocatedValues):
+            while len(objOutputRows[iRowIndex]) < 5:
+                objOutputRows[iRowIndex].append("")
+            objOutputRows[iRowIndex][4] = str(iAllocatedValue)
+
+    for iRowIndex, objRow in enumerate(objStep0003Rows):
+        objNewRow: List[str] = list(objRow)
+        pszStaffNameCell: str = (objNewRow[0] if len(objNewRow) >= 1 else "").strip()
+        pszManhourText: str = (objNewRow[2] if len(objNewRow) >= 3 else "").strip()
+
+        if pszStaffNameCell != "":
+            flush_current_staff_rows()
+            objCurrentStaffRows = []
+            objCurrentStaffDurations = []
+            pszCurrentStaffName = pszStaffNameCell
+            pszTotalValueText: str = (objNewRow[3] if len(objNewRow) >= 4 else "").strip()
+            if pszTotalValueText == "":
+                raise ValueError(f"Total value is blank for staff: {pszCurrentStaffName}")
+            iCurrentStaffTotalValue = parse_integer_text(pszTotalValueText)
+        elif pszCurrentStaffName == "":
+            raise ValueError(f"Staff name could not be resolved at row index: {iRowIndex}")
+
+        iDurationInSeconds: int = parse_h_mm_ss_to_seconds(pszManhourText)
+        objCurrentStaffRows.append(iRowIndex)
+        objCurrentStaffDurations.append(iDurationInSeconds)
+
+    flush_current_staff_rows()
+
+    objOutputPath: Path = (
+        objStaffManhourStep0003Path.resolve().parent
+        / f"スタッフ別工数_step0004_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
 def process_single_input(pszInputXlsxPath: str) -> int:
