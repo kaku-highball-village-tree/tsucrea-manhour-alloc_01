@@ -327,6 +327,22 @@ def process_staff_manhour_step0002_from_step0001_pair(
 
 
 
+
+
+def find_first_non_blank_index(objRow: List[str]) -> int | None:
+    for iIndex, pszValue in enumerate(objRow):
+        if (pszValue or "").strip() != "":
+            return iIndex
+    return None
+
+
+def find_first_numeric_like_index(objRow: List[str], iStartIndex: int = 0) -> int | None:
+    for iIndex in range(max(iStartIndex, 0), len(objRow)):
+        pszValue: str = (objRow[iIndex] or "").strip()
+        if re.match(r"^-?\d+(?:\.\d+)?$", pszValue) is not None:
+            return iIndex
+    return None
+
 def build_salary_total_value_by_staff_from_step0001(objSalaryStep0001Path: Path) -> dict[str, str]:
     objSalaryRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
     if not objSalaryRows:
@@ -346,13 +362,22 @@ def build_salary_total_value_by_staff_from_step0001(objSalaryStep0001Path: Path)
     objTotalRow: List[str] = objSalaryRows[iTotalRowIndex]
     bTotalRowStartsWithLabel: bool = len(objTotalRow) >= 1 and (objTotalRow[0] or "").strip() == "合計"
 
+    iFirstStaffColumnIndex: int | None = find_first_non_blank_index(objHeaderRow)
+    iFirstValueColumnIndex: int | None = find_first_numeric_like_index(
+        objTotalRow,
+        iStartIndex=1 if bTotalRowStartsWithLabel else 0,
+    )
+    iColumnOffset: int = 0
+    if iFirstStaffColumnIndex is not None and iFirstValueColumnIndex is not None:
+        iColumnOffset = iFirstValueColumnIndex - iFirstStaffColumnIndex
+
     objTotalValueByStaff: dict[str, str] = {}
     for iColumnIndex, pszStaffNameRaw in enumerate(objHeaderRow):
         pszStaffName: str = (pszStaffNameRaw or "").strip()
         if pszStaffName == "":
             continue
-        iValueColumnIndex: int = iColumnIndex + 1 if bTotalRowStartsWithLabel else iColumnIndex
-        pszValue: str = objTotalRow[iValueColumnIndex] if iValueColumnIndex < len(objTotalRow) else ""
+        iValueColumnIndex: int = iColumnIndex + iColumnOffset
+        pszValue: str = objTotalRow[iValueColumnIndex] if 0 <= iValueColumnIndex < len(objTotalRow) else ""
         objTotalValueByStaff[pszStaffName] = pszValue
 
     return objTotalValueByStaff
