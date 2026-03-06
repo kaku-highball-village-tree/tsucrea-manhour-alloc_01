@@ -1,1 +1,428 @@
+from __future__ import annotations
 
+import argparse
+import csv
+import re
+from datetime import timedelta
+from pathlib import Path
+from typing import List
+
+
+INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
+YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
+DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
+TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+SALARY_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
+    r"^給与配賦アルバイト_step0001_(\d{4}年\d{2}月)\.tsv$"
+)
+STAFF_MANHOUR_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
+    r"^スタッフ別工数_step0001_(\d{4}年\d{2}月)\.tsv$"
+)
+
+
+def build_candidate_paths(pszInputPath: str) -> List[Path]:
+    objInputPath: Path = Path(pszInputPath)
+    objScriptDirectoryPath: Path = Path(__file__).resolve().parent
+    objInputDirectoryPath: Path = Path.cwd() / "input"
+    return [
+        objInputPath,
+        objScriptDirectoryPath / pszInputPath,
+        objInputDirectoryPath / pszInputPath,
+    ]
+
+
+def resolve_existing_input_path(pszInputPath: str) -> Path:
+    for objCandidatePath in build_candidate_paths(pszInputPath):
+        if objCandidatePath.exists():
+            return objCandidatePath
+    raise FileNotFoundError(f"Input file not found: {pszInputPath}")
+
+
+def sanitize_sheet_name_for_file_name(pszSheetName: str) -> str:
+    pszSanitized: str = INVALID_FILE_CHARS_PATTERN.sub("_", pszSheetName).strip()
+    if pszSanitized == "":
+        return "Sheet"
+    return pszSanitized
+
+
+def build_unique_output_path(
+    objBaseDirectoryPath: Path,
+    pszExcelStem: str,
+    pszSanitizedSheetName: str,
+    objUsedPaths: set[Path],
+) -> Path:
+    objOutputPath: Path = objBaseDirectoryPath / f"{pszExcelStem}_{pszSanitizedSheetName}.tsv"
+    objUsedPaths.add(objOutputPath)
+    return objOutputPath
+
+
+def format_timedelta_as_h_mm_ss(objDuration: timedelta) -> str:
+    iTotalSeconds: int = int(objDuration.total_seconds())
+    iSign: int = -1 if iTotalSeconds < 0 else 1
+    iAbsTotalSeconds: int = abs(iTotalSeconds)
+    iHours: int = iAbsTotalSeconds // 3600
+    iMinutes: int = (iAbsTotalSeconds % 3600) // 60
+    iSeconds: int = iAbsTotalSeconds % 60
+    pszPrefix: str = "-" if iSign < 0 else ""
+    return f"{pszPrefix}{iHours}:{iMinutes:02d}:{iSeconds:02d}"
+
+
+def normalize_duration_text_if_needed(pszText: str) -> str:
+    objMatch = DURATION_TEXT_PATTERN.match(pszText)
+    if objMatch is None:
+        return pszText
+    iDays: int = int(objMatch.group(1))
+    iHours: int = int(objMatch.group(2))
+    iMinutes: int = int(objMatch.group(3))
+    iSeconds: int = int(objMatch.group(4))
+    iTotalHours: int = iDays * 24 + iHours
+    return f"{iTotalHours}:{iMinutes:02d}:{iSeconds:02d}"
+
+
+def normalize_cell_value(objValue: object) -> str:
+    if objValue is None:
+        return ""
+    if isinstance(objValue, timedelta):
+        return format_timedelta_as_h_mm_ss(objValue)
+    pszText: str = str(objValue)
+    pszText = normalize_duration_text_if_needed(pszText)
+    return pszText.replace("\t", "_")
+
+
+def write_sheet_to_tsv(objOutputPath: Path, objRows: List[List[object]]) -> None:
+    with open(objOutputPath, mode="w", encoding="utf-8", newline="") as objFile:
+        objWriter: csv.writer = csv.writer(objFile, delimiter="\t", lineterminator="\n")
+        for objRow in objRows:
+            objWriter.writerow([normalize_cell_value(objValue) for objValue in objRow])
+
+
+def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
+    objRows: List[List[str]] = []
+    with open(objInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
+        objReader = csv.reader(objFile, delimiter="\t")
+        for objRow in objReader:
+            objRows.append(list(objRow))
+    return objRows
+
+
+def is_blank_text(pszText: str) -> bool:
+    return (pszText or "").strip().replace("\u3000", "") == ""
+
+
+def extract_year_month_text_from_path(objInputPath: Path) -> str:
+    objMatch = YEAR_MONTH_PATTERN.search(str(objInputPath))
+    if objMatch is None:
+        raise ValueError(f"Could not extract YY.MM月 from input path: {objInputPath}")
+    iYear: int = 2000 + int(objMatch.group(1))
+    iMonth: int = int(objMatch.group(2))
+    return f"{iYear}年{iMonth:02d}月"
+
+
+def extract_year_month_text_from_step0001_file_name(pszFileName: str) -> str | None:
+    objSalaryMatch = SALARY_STEP0001_FILE_PATTERN.match(pszFileName)
+    if objSalaryMatch is not None:
+        return objSalaryMatch.group(1)
+
+    objStaffManhourMatch = STAFF_MANHOUR_STEP0001_FILE_PATTERN.match(pszFileName)
+    if objStaffManhourMatch is not None:
+        return objStaffManhourMatch.group(1)
+
+    return None
+
+
+def get_effective_column_count(objRow: List[str]) -> int:
+    for iIndex in range(len(objRow) - 1, -1, -1):
+        if not is_blank_text(objRow[iIndex]):
+            return iIndex + 1
+    return 0
+
+
+def is_jobcan_long_format_tsv(objRows: List[List[str]]) -> bool:
+    objNonEmptyRows: List[List[str]] = [
+        objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
+    ]
+    if not objNonEmptyRows:
+        return False
+
+    iTotal: int = len(objNonEmptyRows)
+    iFourColumnsLike: int = 0
+    iTimeTextRows: int = 0
+    iProjectCodeRows: int = 0
+    for objRow in objNonEmptyRows:
+        iEffectiveColumns: int = get_effective_column_count(objRow)
+        if 3 <= iEffectiveColumns <= 5:
+            iFourColumnsLike += 1
+
+        if len(objRow) >= 4:
+            pszTimeText: str = (objRow[3] or "").strip()
+            if TIME_TEXT_PATTERN.match(pszTimeText) is not None or DURATION_TEXT_PATTERN.match(pszTimeText) is not None:
+                iTimeTextRows += 1
+
+        if len(objRow) >= 2:
+            pszProjectText: str = (objRow[1] or "").strip()
+            if re.match(r"^(P\d{5}|[A-OQ-Z]\d{3})", pszProjectText) is not None:
+                iProjectCodeRows += 1
+
+    return (
+        iFourColumnsLike / iTotal >= 0.7
+        and iTimeTextRows / iTotal >= 0.5
+        and iProjectCodeRows / iTotal >= 0.5
+    )
+
+
+def normalize_project_name_for_jobcan_long_tsv(pszProjectName: str) -> str:
+    pszNormalized: str = pszProjectName or ""
+    pszNormalized = pszNormalized.replace("\t", "_")
+    pszNormalized = re.sub(r"(P\d{5})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"([A-OQ-Z]\d{3})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"^([A-OQ-Z]\d{3}) +", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"([A-OQ-Z]\d{3})[ 　]+", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"(P\d{5})[ 　]+", r"\1_", pszNormalized)
+    return pszNormalized
+
+
+def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List[str]]) -> int:
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
+    for objRow in objRows:
+        if not any(not is_blank_text(pszCell) for pszCell in objRow):
+            continue
+        if len(objRow) < 4:
+            continue
+
+        pszStaffName: str = (objRow[0] or "").strip()
+        if pszStaffName != "":
+            pszCurrentStaffName = pszStaffName
+        if pszCurrentStaffName == "":
+            continue
+
+        pszProjectName: str = normalize_project_name_for_jobcan_long_tsv((objRow[1] or "").strip())
+        pszManhour: str = (objRow[3] or "").strip()
+        if pszProjectName == "" and pszManhour == "":
+            continue
+
+        objOutputRows.append([pszCurrentStaffName, pszProjectName, pszManhour])
+
+    if not objOutputRows:
+        raise ValueError("No output rows generated for Jobcan long-format TSV")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"スタッフ別工数_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_tsv_input(objResolvedInputPath: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
+    if len(objRows) < 2:
+        raise ValueError(f"Input TSV has too few rows: {objResolvedInputPath}")
+
+    if is_jobcan_long_format_tsv(objRows):
+        return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
+
+    objRowsWithoutA: List[List[str]] = [objRow[1:] if len(objRow) >= 1 else [] for objRow in objRows]
+
+    if len(objRowsWithoutA[0]) < 1:
+        raise ValueError("B1 text could not be found after removing column A")
+    pszTitle: str = (objRowsWithoutA[0][0] or "").strip()
+    if pszTitle == "":
+        raise ValueError("B1 text is empty")
+
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    if len(objRowsWithoutA) >= 2:
+        objOutputRows.append(objRowsWithoutA[1])
+    objOutputRows.extend(objRowsWithoutA[3:])
+
+    objFilteredOutputRows: List[List[str]] = []
+    for objRow in objOutputRows:
+        if any(not is_blank_text(pszCell) for pszCell in objRow):
+            objFilteredOutputRows.append(objRow)
+
+    if not objFilteredOutputRows:
+        raise ValueError("No output rows after applying TSV row rules")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"{pszTitle}_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objFilteredOutputRows)
+    return 0
+
+
+def process_staff_manhour_step0002_from_step0001_pair(
+    objSalaryStep0001Path: Path,
+    objStaffManhourStep0001Path: Path,
+) -> int:
+    pszSalaryYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+        objSalaryStep0001Path.name
+    )
+    pszStaffManhourYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+        objStaffManhourStep0001Path.name
+    )
+    if pszSalaryYearMonthText is None or pszStaffManhourYearMonthText is None:
+        raise ValueError("Could not extract year-month from step0001 file names")
+    if pszSalaryYearMonthText != pszStaffManhourYearMonthText:
+        raise ValueError("Year-month mismatch between salary and staff-manhour step0001 files")
+
+    objSalaryRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
+    if not objSalaryRows:
+        raise ValueError(f"Input TSV has no rows: {objSalaryStep0001Path}")
+
+    objAllowedStaffNames: set[str] = {
+        (pszCell or "").strip()
+        for pszCell in objSalaryRows[0]
+        if (pszCell or "").strip() != ""
+    }
+    if not objAllowedStaffNames:
+        raise ValueError(f"No staff names found in first row: {objSalaryStep0001Path}")
+
+    objStaffManhourRows: List[List[str]] = read_tsv_rows(objStaffManhourStep0001Path)
+    if not objStaffManhourRows:
+        raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0001Path}")
+
+    objOutputRows: List[List[str]] = []
+    for objRow in objStaffManhourRows:
+        pszStaffName: str = (objRow[0] if objRow else "").strip()
+        if pszStaffName in objAllowedStaffNames:
+            objOutputRows.append(objRow)
+
+    if not objOutputRows:
+        raise ValueError("No rows remained after filtering by salary step0001 first-row staff names")
+
+    objOutputPath: Path = (
+        objStaffManhourStep0001Path.resolve().parent
+        / f"スタッフ別工数_step0002_{pszStaffManhourYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_single_input(pszInputXlsxPath: str) -> int:
+    objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
+    pszSuffix: str = objResolvedInputPath.suffix.lower()
+
+    if pszSuffix == ".tsv":
+        return process_tsv_input(objResolvedInputPath)
+
+    if pszSuffix != ".xlsx":
+        raise ValueError(f"Unsupported extension (only .xlsx/.tsv): {objResolvedInputPath}")
+
+    objBaseDirectoryPath: Path = objResolvedInputPath.resolve().parent
+    pszExcelStem: str = objResolvedInputPath.stem
+
+    try:
+        import openpyxl
+    except Exception as objException:
+        raise RuntimeError(f"Failed to import openpyxl: {objException}") from objException
+
+    try:
+        objWorkbook = openpyxl.load_workbook(
+            filename=objResolvedInputPath,
+            read_only=True,
+            data_only=True,
+        )
+    except Exception as objException:
+        raise RuntimeError(f"Failed to read workbook: {objResolvedInputPath}. Detail = {objException}") from objException
+
+    objUsedPaths: set[Path] = set()
+    try:
+        for objWorksheet in objWorkbook.worksheets:
+            pszSanitizedSheetName: str = sanitize_sheet_name_for_file_name(objWorksheet.title)
+            objOutputPath: Path = build_unique_output_path(
+                objBaseDirectoryPath,
+                pszExcelStem,
+                pszSanitizedSheetName,
+                objUsedPaths,
+            )
+            objRows: List[List[object]] = [list(objRow) for objRow in objWorksheet.iter_rows(values_only=True)]
+            write_sheet_to_tsv(objOutputPath, objRows)
+    finally:
+        objWorkbook.close()
+
+    return 0
+
+
+def main() -> int:
+    objParser: argparse.ArgumentParser = argparse.ArgumentParser()
+    objParser.add_argument(
+        "pszInputXlsxPaths",
+        nargs="+",
+        help="Input Excel (.xlsx) file paths",
+    )
+    objArgs: argparse.Namespace = objParser.parse_args()
+
+    iExitCode: int = 0
+    objHandledInputPaths: set[Path] = set()
+
+    objSalaryStep0001ByYearMonth: dict[str, Path] = {}
+    objStaffManhourStep0001ByYearMonth: dict[str, Path] = {}
+    for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
+        try:
+            objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
+        except Exception:
+            continue
+
+        pszYearMonthText: str | None = extract_year_month_text_from_step0001_file_name(
+            objResolvedInputPath.name
+        )
+        if pszYearMonthText is None:
+            continue
+
+        objSalaryMatch = SALARY_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name)
+        if objSalaryMatch is not None:
+            objSalaryStep0001ByYearMonth[pszYearMonthText] = objResolvedInputPath
+
+        objStaffManhourMatch = STAFF_MANHOUR_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name)
+        if objStaffManhourMatch is not None:
+            objStaffManhourStep0001ByYearMonth[pszYearMonthText] = objResolvedInputPath
+
+    for pszYearMonthText, objSalaryStep0001Path in objSalaryStep0001ByYearMonth.items():
+        objStaffManhourStep0001Path: Path | None = objStaffManhourStep0001ByYearMonth.get(
+            pszYearMonthText
+        )
+        if objStaffManhourStep0001Path is None:
+            continue
+        try:
+            process_staff_manhour_step0002_from_step0001_pair(
+                objSalaryStep0001Path,
+                objStaffManhourStep0001Path,
+            )
+            objHandledInputPaths.add(objSalaryStep0001Path.resolve())
+            objHandledInputPaths.add(objStaffManhourStep0001Path.resolve())
+        except Exception as objException:
+            print(
+                "Error: failed to process step0002 pair: {0} / {1}. Detail = {2}".format(
+                    objSalaryStep0001Path,
+                    objStaffManhourStep0001Path,
+                    objException,
+                )
+            )
+            iExitCode = 1
+
+    for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
+        try:
+            objResolvedInputPath = resolve_existing_input_path(pszInputXlsxPath)
+            if objResolvedInputPath.resolve() in objHandledInputPaths:
+                continue
+            process_single_input(pszInputXlsxPath)
+        except Exception as objException:
+            print(
+                "Error: failed to process input file: {0}. Detail = {1}".format(
+                    pszInputXlsxPath,
+                    objException,
+                )
+            )
+            iExitCode = 1
+            continue
+
+    return iExitCode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
