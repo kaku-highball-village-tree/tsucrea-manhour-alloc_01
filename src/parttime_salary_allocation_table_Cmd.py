@@ -421,7 +421,12 @@ def process_staff_manhour_step0003_from_step0002(
         / f"スタッフ別工数_step0003_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objOutputRows)
-    process_staff_manhour_step0004_from_step0003(objOutputPath, pszYearMonthText)
+    objStep0004Path: Path = process_staff_manhour_step0004_from_step0003(objOutputPath, pszYearMonthText)
+    process_staff_manhour_step0005_from_step0004_and_salary_step0001(
+        objStep0004Path,
+        objSalaryStep0001Path,
+        pszYearMonthText,
+    )
     return 0
 
 
@@ -486,7 +491,7 @@ def allocate_integer_values_by_ratio(iTotalValue: int, objDurationsInSeconds: Li
 def process_staff_manhour_step0004_from_step0003(
     objStaffManhourStep0003Path: Path,
     pszYearMonthText: str,
-) -> int:
+) -> Path:
     objStep0003Rows: List[List[str]] = read_tsv_rows(objStaffManhourStep0003Path)
     if not objStep0003Rows:
         raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0003Path}")
@@ -542,7 +547,61 @@ def process_staff_manhour_step0004_from_step0003(
         / f"スタッフ別工数_step0004_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objOutputRows)
-    return 0
+    return objOutputPath
+
+
+def collect_non_blank_staff_names_from_step0004_rows(objRows: List[List[str]]) -> set[str]:
+    objStaffNames: set[str] = set()
+    for objRow in objRows:
+        pszStaffName: str = (objRow[0] if len(objRow) >= 1 else "").strip()
+        if pszStaffName != "":
+            objStaffNames.add(pszStaffName)
+    return objStaffNames
+
+
+def process_staff_manhour_step0005_from_step0004_and_salary_step0001(
+    objStaffManhourStep0004Path: Path,
+    objSalaryStep0001Path: Path,
+    pszYearMonthText: str,
+) -> Path:
+    objStep0004Rows: List[List[str]] = read_tsv_rows(objStaffManhourStep0004Path)
+    if not objStep0004Rows:
+        raise ValueError(f"Input TSV has no rows: {objStaffManhourStep0004Path}")
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objStep0004Rows]
+    objStaffNamesInStep0004: set[str] = collect_non_blank_staff_names_from_step0004_rows(objStep0004Rows)
+
+    objSalaryRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
+    if not objSalaryRows:
+        raise ValueError(f"Input TSV has no rows: {objSalaryStep0001Path}")
+
+    objHeaderRow: List[str] = objSalaryRows[0]
+    objTotalValueByStaff: dict[str, str] = build_salary_total_value_by_staff_from_step0001(objSalaryStep0001Path)
+
+    iOutputColumnCount: int = 0
+    for objRow in objOutputRows:
+        if len(objRow) > iOutputColumnCount:
+            iOutputColumnCount = len(objRow)
+    iOutputColumnCount = max(iOutputColumnCount, 5)
+
+    for pszStaffNameRaw in objHeaderRow:
+        pszStaffName: str = (pszStaffNameRaw or "").strip()
+        if pszStaffName == "":
+            continue
+        if pszStaffName in objStaffNamesInStep0004:
+            continue
+
+        objAppendRow: List[str] = [""] * iOutputColumnCount
+        objAppendRow[0] = pszStaffName
+        objAppendRow[3] = objTotalValueByStaff.get(pszStaffName, "")
+        objOutputRows.append(objAppendRow)
+
+    objOutputPath: Path = (
+        objStaffManhourStep0004Path.resolve().parent
+        / f"スタッフ別工数_step0005_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return objOutputPath
 
 def process_single_input(pszInputXlsxPath: str) -> int:
     objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
