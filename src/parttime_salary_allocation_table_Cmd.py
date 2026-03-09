@@ -260,6 +260,78 @@ def is_salary_allocation_parttime_tsv(objRows: List[List[str]]) -> bool:
     return iNumericCount >= 3
 
 
+
+
+def is_pre_salary_allocation_source_tsv(
+    objRows: List[List[str]],
+    objInputPath: Path,
+) -> bool:
+    if len(objRows) < 2:
+        return False
+
+    if is_jobcan_long_format_tsv(objRows):
+        return False
+
+    if YEAR_MONTH_PATTERN.search(str(objInputPath)) is None:
+        return False
+
+    objTitleRowCandidates: List[List[str]] = [objRows[0]]
+    if len(objRows) >= 2:
+        objTitleRowCandidates.append(objRows[1])
+
+    bHasSalaryTitle: bool = False
+    for objRow in objTitleRowCandidates:
+        for pszCell in objRow:
+            if "給与配賦アルバイト" in (pszCell or ""):
+                bHasSalaryTitle = True
+                break
+        if bHasSalaryTitle:
+            break
+    if not bHasSalaryTitle:
+        return False
+
+    for objRow in objRows:
+        for pszCell in objRow:
+            if (pszCell or "").strip() == "合計":
+                return True
+    return False
+
+
+def process_pre_salary_allocation_source_tsv(
+    objResolvedInputPath: Path,
+    objRows: List[List[str]],
+) -> int:
+    objRowsWithoutA: List[List[str]] = [objRow[1:] if len(objRow) >= 1 else [] for objRow in objRows]
+
+    if len(objRowsWithoutA[0]) < 1:
+        raise ValueError("B1 text could not be found after removing column A")
+    pszTitle: str = (objRowsWithoutA[0][0] or "").strip()
+    if pszTitle == "":
+        raise ValueError("B1 text is empty")
+
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    if len(objRowsWithoutA) >= 2:
+        objOutputRows.append(objRowsWithoutA[1])
+    objOutputRows.extend(objRowsWithoutA[3:])
+
+    objFilteredOutputRows: List[List[str]] = []
+    for objRow in objOutputRows:
+        if any(not is_blank_text(pszCell) for pszCell in objRow):
+            objFilteredOutputRows.append(objRow)
+
+    if not objFilteredOutputRows:
+        raise ValueError("No output rows after applying TSV row rules")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"{pszTitle}_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objFilteredOutputRows)
+    return 0
+
+
 def build_error_copy_output_path(objInputPath: Path) -> Path:
     return objInputPath.resolve().with_name(f"{objInputPath.stem}_error{objInputPath.suffix}")
 
@@ -295,42 +367,17 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     if is_jobcan_long_format_tsv(objRows):
         return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
 
-    if not is_salary_allocation_parttime_tsv(objRows):
-        if is_specific_fallback_case_for_staff_step0001_error(objResolvedInputPath):
-            return write_specific_staff_step0001_error_file(objResolvedInputPath)
+    if is_pre_salary_allocation_source_tsv(objRows, objResolvedInputPath):
+        return process_pre_salary_allocation_source_tsv(objResolvedInputPath, objRows)
 
-        objErrorOutputPath: Path = build_error_copy_output_path(objResolvedInputPath)
-        write_sheet_to_tsv(objErrorOutputPath, objRows)
-        return 0
+    if is_salary_allocation_parttime_tsv(objRows):
+        return process_pre_salary_allocation_source_tsv(objResolvedInputPath, objRows)
 
-    objRowsWithoutA: List[List[str]] = [objRow[1:] if len(objRow) >= 1 else [] for objRow in objRows]
+    if is_specific_fallback_case_for_staff_step0001_error(objResolvedInputPath):
+        return write_specific_staff_step0001_error_file(objResolvedInputPath)
 
-    if len(objRowsWithoutA[0]) < 1:
-        raise ValueError("B1 text could not be found after removing column A")
-    pszTitle: str = (objRowsWithoutA[0][0] or "").strip()
-    if pszTitle == "":
-        raise ValueError("B1 text is empty")
-
-    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
-
-    objOutputRows: List[List[str]] = []
-    if len(objRowsWithoutA) >= 2:
-        objOutputRows.append(objRowsWithoutA[1])
-    objOutputRows.extend(objRowsWithoutA[3:])
-
-    objFilteredOutputRows: List[List[str]] = []
-    for objRow in objOutputRows:
-        if any(not is_blank_text(pszCell) for pszCell in objRow):
-            objFilteredOutputRows.append(objRow)
-
-    if not objFilteredOutputRows:
-        raise ValueError("No output rows after applying TSV row rules")
-
-    objOutputPath: Path = (
-        objResolvedInputPath.resolve().parent
-        / f"{pszTitle}_step0001_{pszYearMonthText}.tsv"
-    )
-    write_sheet_to_tsv(objOutputPath, objFilteredOutputRows)
+    objErrorOutputPath: Path = build_error_copy_output_path(objResolvedInputPath)
+    write_sheet_to_tsv(objErrorOutputPath, objRows)
     return 0
 
 
