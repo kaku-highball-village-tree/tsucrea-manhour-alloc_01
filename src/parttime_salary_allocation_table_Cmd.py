@@ -316,13 +316,13 @@ def determine_salary_step0001_output_title(
         or "定期代" in pszTailText
         or "定期" in pszTailText
     ):
-        return "通勤手当アルバイト"
+        return "通勤手当"
 
     if "交通費" in pszTailText or "交通" in pszTailText:
-        return "交通費アルバイト"
+        return "交通費"
 
     if "法定福利費" in pszTailText or "法定福利" in pszTailText:
-        return "法定福利費配賦アルバイト"
+        return "法定福利費配賦"
 
     return pszBaseTitle
 
