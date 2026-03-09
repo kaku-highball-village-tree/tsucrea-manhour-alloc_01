@@ -297,6 +297,36 @@ def is_pre_salary_allocation_source_tsv(
     return False
 
 
+
+
+def determine_salary_step0001_output_title(
+    pszBaseTitle: str,
+    objInputPath: Path,
+) -> str:
+    pszInputFileName: str = objInputPath.name
+    objTailMatch = re.search(r"アルバイト給与配賦表\d{2}\.\d{1,2}月分(.*)\.tsv$", pszInputFileName)
+    if objTailMatch is None:
+        return pszBaseTitle
+
+    pszTailText: str = objTailMatch.group(1)
+
+    if (
+        "非課税通勤手当" in pszTailText
+        or "通勤手当" in pszTailText
+        or "定期代" in pszTailText
+        or "定期" in pszTailText
+    ):
+        return "通勤手当アルバイト"
+
+    if "交通費" in pszTailText or "交通" in pszTailText:
+        return "交通費アルバイト"
+
+    if "法定福利費" in pszTailText or "法定福利" in pszTailText:
+        return "法定福利費配賦アルバイト"
+
+    return pszBaseTitle
+
+
 def process_pre_salary_allocation_source_tsv(
     objResolvedInputPath: Path,
     objRows: List[List[str]],
@@ -324,9 +354,14 @@ def process_pre_salary_allocation_source_tsv(
     if not objFilteredOutputRows:
         raise ValueError("No output rows after applying TSV row rules")
 
+    pszOutputTitle: str = determine_salary_step0001_output_title(
+        pszTitle,
+        objResolvedInputPath,
+    )
+
     objOutputPath: Path = (
         objResolvedInputPath.resolve().parent
-        / f"{pszTitle}_step0001_{pszYearMonthText}.tsv"
+        / f"{pszOutputTitle}_step0001_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objFilteredOutputRows)
     return 0
