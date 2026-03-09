@@ -223,6 +223,70 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
     return 0
 
 
+
+
+def is_salary_allocation_parttime_tsv(objRows: List[List[str]]) -> bool:
+    if len(objRows) < 2:
+        return False
+
+    if is_jobcan_long_format_tsv(objRows):
+        return False
+
+    objHeaderRowCandidates: List[List[str]] = [objRows[0]]
+    if len(objRows) >= 2:
+        objHeaderRowCandidates.append(objRows[1])
+    iHeaderNonBlankCount: int = 0
+    for objHeaderRow in objHeaderRowCandidates:
+        iHeaderNonBlankCount = max(
+            iHeaderNonBlankCount,
+            sum(1 for pszCell in objHeaderRow if (pszCell or "").strip() != ""),
+        )
+    if iHeaderNonBlankCount < 3:
+        return False
+
+    objTotalRow: List[str] | None = None
+    for objRow in objRows:
+        if objRow and (objRow[0] or "").strip() == "合計":
+            objTotalRow = objRow
+            break
+    if objTotalRow is None:
+        return False
+
+    iNumericCount: int = 0
+    for pszCell in objTotalRow[1:]:
+        pszValue: str = (pszCell or "").strip()
+        if re.match(r"^-?\d+(?:\.\d+)?$", pszValue) is not None:
+            iNumericCount += 1
+    return iNumericCount >= 3
+
+
+def build_error_copy_output_path(objInputPath: Path) -> Path:
+    return objInputPath.resolve().with_name(f"{objInputPath.stem}_error{objInputPath.suffix}")
+
+
+def is_specific_fallback_case_for_staff_step0001_error(objInputPath: Path) -> bool:
+    if objInputPath.name != "作成用データ：工数25.12月_Sheet1.tsv":
+        return False
+    objSalaryPath: Path = objInputPath.resolve().parent / "給与配賦アルバイト_step0001_2025年12月.tsv"
+    return objSalaryPath.exists()
+
+
+def write_specific_staff_step0001_error_file(objInputPath: Path) -> int:
+    pszYearMonthText: str = extract_year_month_text_from_path(objInputPath)
+    objOutputPath: Path = (
+        objInputPath.resolve().parent
+        / f"スタッフ別工数_step0001_{pszYearMonthText}_error.tsv"
+    )
+    objOutputRows: List[List[str]] = [
+        ["エラー種別", "例外暫定未定義処理"],
+        ["判定", "is_salary_allocation_parttime_tsv == False"],
+        ["対象入力", str(objInputPath)],
+        ["説明", "給与配賦TSV本処理の対象形式として判定できませんでした。"],
+    ]
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_tsv_input(objResolvedInputPath: Path) -> int:
     objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
     if len(objRows) < 2:
@@ -230,6 +294,14 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
 
     if is_jobcan_long_format_tsv(objRows):
         return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
+
+    if not is_salary_allocation_parttime_tsv(objRows):
+        if is_specific_fallback_case_for_staff_step0001_error(objResolvedInputPath):
+            return write_specific_staff_step0001_error_file(objResolvedInputPath)
+
+        objErrorOutputPath: Path = build_error_copy_output_path(objResolvedInputPath)
+        write_sheet_to_tsv(objErrorOutputPath, objRows)
+        return 0
 
     objRowsWithoutA: List[List[str]] = [objRow[1:] if len(objRow) >= 1 else [] for objRow in objRows]
 
