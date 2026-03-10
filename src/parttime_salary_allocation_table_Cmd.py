@@ -52,8 +52,19 @@ def build_unique_output_path(
     objUsedPaths: set[Path],
 ) -> Path:
     objOutputPath: Path = objBaseDirectoryPath / f"{pszExcelStem}_{pszSanitizedSheetName}.tsv"
-    objUsedPaths.add(objOutputPath)
-    return objOutputPath
+    if objOutputPath not in objUsedPaths:
+        objUsedPaths.add(objOutputPath)
+        return objOutputPath
+
+    iSuffix: int = 2
+    while True:
+        objCandidatePath: Path = (
+            objBaseDirectoryPath / f"{pszExcelStem}_{pszSanitizedSheetName}_{iSuffix}.tsv"
+        )
+        if objCandidatePath not in objUsedPaths:
+            objUsedPaths.add(objCandidatePath)
+            return objCandidatePath
+        iSuffix += 1
 
 
 def format_timedelta_as_h_mm_ss(objDuration: timedelta) -> str:
@@ -807,7 +818,7 @@ def main() -> int:
     objParser.add_argument(
         "pszInputXlsxPaths",
         nargs="+",
-        help="Input Excel (.xlsx) file paths",
+        help="Input file paths (.xlsx or .tsv)",
     )
     objArgs: argparse.Namespace = objParser.parse_args()
 
