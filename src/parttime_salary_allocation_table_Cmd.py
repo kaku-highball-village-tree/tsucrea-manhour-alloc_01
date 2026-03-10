@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import shutil
 from datetime import timedelta
 from pathlib import Path
 from typing import List
@@ -427,6 +428,14 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     return 0
 
 
+def build_salary_step0002_output_path_from_step0001(objSalaryStep0001Path: Path) -> Path:
+    pszFileName: str = objSalaryStep0001Path.name
+    if "_step0001_" not in pszFileName:
+        raise ValueError(f"Input is not step0001 file: {objSalaryStep0001Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0001_", "_step0002_", 1)
+    return objSalaryStep0001Path.resolve().parent / pszOutputFileName
+
+
 def process_staff_manhour_step0002_from_step0001_pair(
     objSalaryStep0001Path: Path,
     objStaffManhourStep0001Path: Path,
@@ -487,6 +496,18 @@ def process_staff_manhour_step0002_from_step0001_pair(
         objOutputPath,
         pszStaffManhourYearMonthText,
     )
+
+    objStaffManhourStep0005Path: Path = (
+        objStaffManhourStep0001Path.resolve().parent
+        / f"スタッフ別工数_step0005_{pszStaffManhourYearMonthText}.tsv"
+    )
+    if not objStaffManhourStep0005Path.exists():
+        raise FileNotFoundError(f"Step0005 output not found: {objStaffManhourStep0005Path}")
+
+    objSalaryStep0002Path: Path = build_salary_step0002_output_path_from_step0001(
+        objSalaryStep0001Path
+    )
+    shutil.copyfile(objStaffManhourStep0005Path, objSalaryStep0002Path)
     return 0
 
 
