@@ -13,7 +13,7 @@ YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
 SALARY_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
-    r"^(?:給与配賦アルバイト|法定福利費配賦|交通費|通勤手当)_step0001_(\d{4}年\d{2}月)\.tsv$"
+    r"^(?:給与配賦アルバイト|法定福利費配賦アルバイト|交通費配賦アルバイト|通勤手当配賦アルバイト)_step0001_(\d{4}年\d{2}月)\.tsv$"
 )
 STAFF_MANHOUR_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(
     r"^スタッフ別工数_step0001_(\d{4}年\d{2}月)\.tsv$"
