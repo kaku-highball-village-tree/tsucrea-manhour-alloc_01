@@ -9,7 +9,9 @@ from typing import List
 
 
 INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
+YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
+TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -99,12 +101,141 @@ def write_sheet_to_tsv(objOutputPath: Path, objRows: List[List[object]]) -> None
             objWriter.writerow([normalize_cell_value(objValue) for objValue in objRow])
 
 
+def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
+    objRows: List[List[str]] = []
+    with open(objInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
+        objReader = csv.reader(objFile, delimiter="\t")
+        for objRow in objReader:
+            objRows.append(list(objRow))
+    return objRows
+
+
+def is_blank_text(pszText: str) -> bool:
+    return (pszText or "").strip().replace("\u3000", "") == ""
+
+
+def get_effective_column_count(objRow: List[str]) -> int:
+    for iIndex in range(len(objRow) - 1, -1, -1):
+        if not is_blank_text(objRow[iIndex]):
+            return iIndex + 1
+    return 0
+
+
+def is_jobcan_long_format_tsv(objRows: List[List[str]]) -> bool:
+    objNonEmptyRows: List[List[str]] = [
+        objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
+    ]
+    if not objNonEmptyRows:
+        return False
+
+    iTotal: int = len(objNonEmptyRows)
+    iFourColumnsLike: int = 0
+    iTimeTextRows: int = 0
+    iProjectCodeRows: int = 0
+    for objRow in objNonEmptyRows:
+        iEffectiveColumns: int = get_effective_column_count(objRow)
+        if 3 <= iEffectiveColumns <= 5:
+            iFourColumnsLike += 1
+
+        if len(objRow) >= 4:
+            pszTimeText: str = (objRow[3] or "").strip()
+            if TIME_TEXT_PATTERN.match(pszTimeText) is not None or DURATION_TEXT_PATTERN.match(pszTimeText) is not None:
+                iTimeTextRows += 1
+
+        if len(objRow) >= 2:
+            pszProjectText: str = (objRow[1] or "").strip()
+            if re.match(r"^(P\d{5}|[A-OQ-Z]\d{3})", pszProjectText) is not None:
+                iProjectCodeRows += 1
+
+    return (
+        iFourColumnsLike / iTotal >= 0.7
+        and iTimeTextRows / iTotal >= 0.5
+        and iProjectCodeRows / iTotal >= 0.5
+    )
+
+
+def extract_year_month_text_from_path(objInputPath: Path) -> str:
+    objMatch = YEAR_MONTH_PATTERN.search(str(objInputPath))
+    if objMatch is None:
+        raise ValueError(f"Could not extract YY.MM月 from input path: {objInputPath}")
+    iYear: int = 2000 + int(objMatch.group(1))
+    iMonth: int = int(objMatch.group(2))
+    return f"{iYear}年{iMonth:02d}月"
+
+
+def normalize_project_name_for_jobcan_long_tsv(pszProjectName: str) -> str:
+    pszNormalized: str = pszProjectName or ""
+    pszNormalized = pszNormalized.replace("\t", "_")
+    pszNormalized = re.sub(r"(P\d{5})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"([A-OQ-Z]\d{3})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"^([A-OQ-Z]\d{3}) +", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"([A-OQ-Z]\d{3})[ 　]+", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"(P\d{5})[ 　]+", r"\1_", pszNormalized)
+    return pszNormalized
+
+
+def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List[str]]) -> int:
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
+    pszLastOutputStaffName: str = ""
+    for objRow in objRows:
+        if not any(not is_blank_text(pszCell) for pszCell in objRow):
+            continue
+        if len(objRow) < 4:
+            continue
+
+        pszStaffName: str = (objRow[0] or "").strip()
+        if pszStaffName != "":
+            pszCurrentStaffName = pszStaffName
+        if pszCurrentStaffName == "":
+            continue
+
+        pszProjectName: str = normalize_project_name_for_jobcan_long_tsv((objRow[1] or "").strip())
+        pszManhour: str = (objRow[3] or "").strip()
+        if pszProjectName == "" and pszManhour == "":
+            continue
+
+        pszOutputStaffName: str = pszCurrentStaffName
+        if pszCurrentStaffName == pszLastOutputStaffName:
+            pszOutputStaffName = ""
+        else:
+            pszLastOutputStaffName = pszCurrentStaffName
+
+        objOutputRows.append([pszOutputStaffName, pszProjectName, pszManhour])
+
+    if not objOutputRows:
+        raise ValueError("No output rows generated for Jobcan long-format TSV")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"スタッフ別工数_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_tsv_input(objResolvedInputPath: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
+    if len(objRows) < 2:
+        raise ValueError(f"Input TSV has too few rows: {objResolvedInputPath}")
+
+    if is_jobcan_long_format_tsv(objRows):
+        return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
+
+    raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
+
+
 def process_single_input(pszInputXlsxPath: str) -> int:
     objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
     pszSuffix: str = objResolvedInputPath.suffix.lower()
 
+    if pszSuffix == ".tsv":
+        return process_tsv_input(objResolvedInputPath)
+
     if pszSuffix != ".xlsx":
-        raise ValueError(f"Unsupported extension (only .xlsx): {objResolvedInputPath}")
+        raise ValueError(f"Unsupported extension (only .xlsx/.tsv): {objResolvedInputPath}")
 
     objBaseDirectoryPath: Path = objResolvedInputPath.resolve().parent
     pszExcelStem: str = objResolvedInputPath.stem
@@ -146,7 +277,7 @@ def main() -> int:
     objParser.add_argument(
         "pszInputXlsxPaths",
         nargs="+",
-        help="Input file paths (.xlsx)",
+        help="Input file paths (.xlsx or .tsv)",
     )
     objArgs: argparse.Namespace = objParser.parse_args()
 
