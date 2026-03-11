@@ -210,7 +210,7 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
 
     objOutputPath: Path = (
         objResolvedInputPath.resolve().parent
-        / f"スタッフ別工数_step0001_{pszYearMonthText}.tsv"
+        / f"ローデータ_シート_step0001_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
