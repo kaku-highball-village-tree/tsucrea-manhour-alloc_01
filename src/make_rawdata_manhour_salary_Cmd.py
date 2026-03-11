@@ -12,6 +12,34 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
+    "従業員名",
+    "スタッフコード",
+    "基本給",
+    "課税通勤手当",
+    "非課税通勤手当",
+    "残業手当",
+    "残業時間(60時間以上)",
+    "深夜労働手当",
+    "休日労働手当",
+    "固定残業代",
+    "赴任手当",
+    "テレワーク手当",
+    "プロジェクトリーダー手当",
+    "その他支給",
+    "欠勤控除",
+    "遅刻早退控除",
+    "立替経費",
+    "その他手当",
+    "その他控除",
+    "健保事業主負担",
+    "介護事業主負担",
+    "厚年事業主負担",
+    "雇保事業主負担",
+    "労災保険料",
+    "一般拠出金",
+    "子育拠出金",
+)
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -154,6 +182,31 @@ def is_jobcan_long_format_tsv(objRows: List[List[str]]) -> bool:
     )
 
 
+def is_salary_payment_deduction_list_tsv(objRows: List[List[str]]) -> bool:
+    if len(objRows) < 2:
+        return False
+
+    objHeaderRow: List[str] = objRows[0]
+    objHeaderSet: set[str] = {
+        (pszCell or "").strip()
+        for pszCell in objHeaderRow
+        if (pszCell or "").strip() != ""
+    }
+    if not all(pszRequiredHeader in objHeaderSet for pszRequiredHeader in SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS):
+        return False
+
+    iStaffCodeIndex: int = objHeaderRow.index("スタッフコード")
+    bHasStaffCodeValue: bool = False
+    for objRow in objRows[1:]:
+        if iStaffCodeIndex >= len(objRow):
+            continue
+        pszStaffCode: str = (objRow[iStaffCodeIndex] or "").strip()
+        if re.match(r"^\d+$", pszStaffCode) is not None:
+            bHasStaffCodeValue = True
+            break
+    return bHasStaffCodeValue
+
+
 def extract_year_month_text_from_path(objInputPath: Path) -> str:
     objMatch = YEAR_MONTH_PATTERN.search(str(objInputPath))
     if objMatch is None:
@@ -278,7 +331,26 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     if is_jobcan_long_format_tsv(objRows):
         return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
 
+    if is_salary_payment_deduction_list_tsv(objRows):
+        raise ValueError(f"Salary payment/deduction list TSV is not supported yet: {objResolvedInputPath}")
+
     raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
+
+
+def build_salary_payment_deduction_step0001_output_path_from_csv(
+    objResolvedInputPath: Path,
+) -> Path:
+    pszStem: str = objResolvedInputPath.stem
+    pszStem = re.sub(r"^作成用データ：", "", pszStem)
+
+    pszBaseName: str
+    pszDateLabel: str
+    pszBaseName, pszSeparator, pszDateLabel = pszStem.rpartition("_")
+    if pszSeparator == "" or pszBaseName == "" or pszDateLabel == "":
+        raise ValueError(f"Could not build salary step0001 output name from csv: {objResolvedInputPath}")
+
+    pszOutputFileName: str = f"{pszBaseName}_step0001_{pszDateLabel}.tsv"
+    return objResolvedInputPath.resolve().with_name(pszOutputFileName)
 
 
 def process_csv_input(objResolvedInputPath: Path) -> int:
@@ -290,6 +362,13 @@ def process_csv_input(objResolvedInputPath: Path) -> int:
 
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
     write_sheet_to_tsv(objOutputPath, objRows)
+
+    if is_salary_payment_deduction_list_tsv(objRows):
+        objSalaryStep0001OutputPath: Path = build_salary_payment_deduction_step0001_output_path_from_csv(
+            objResolvedInputPath
+        )
+        write_sheet_to_tsv(objSalaryStep0001OutputPath, objRows)
+
     return 0
 
 
