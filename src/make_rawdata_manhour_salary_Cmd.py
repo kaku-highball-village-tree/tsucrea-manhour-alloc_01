@@ -174,7 +174,10 @@ def normalize_project_name_for_jobcan_long_tsv(pszProjectName: str) -> str:
     return pszNormalized
 
 
-def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List[str]]) -> int:
+def process_jobcan_long_tsv_input_rawdata_sheet_step0001(
+    objResolvedInputPath: Path,
+    objRows: List[List[str]],
+) -> int:
     pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
 
     objOutputRows: List[List[str]] = []
@@ -213,6 +216,57 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
         / f"ローデータ_シート_step0001_{pszYearMonthText}.tsv"
     )
     write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_jobcan_long_tsv_input_new_rawdata_sheet_step0001(
+    objResolvedInputPath: Path,
+    objRows: List[List[str]],
+) -> int:
+    pszYearMonthText: str = extract_year_month_text_from_path(objResolvedInputPath)
+
+    objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
+    pszLastOutputStaffName: str = ""
+    for objRow in objRows:
+        if not any(not is_blank_text(pszCell) for pszCell in objRow):
+            continue
+        if len(objRow) < 4:
+            continue
+
+        pszStaffName: str = (objRow[0] or "").strip()
+        if pszStaffName != "":
+            pszCurrentStaffName = pszStaffName
+        if pszCurrentStaffName == "":
+            continue
+
+        pszProjectName: str = normalize_project_name_for_jobcan_long_tsv((objRow[1] or "").strip())
+        pszManhour: str = (objRow[3] or "").strip()
+        if pszProjectName == "" and pszManhour == "":
+            continue
+
+        pszOutputStaffName: str = pszCurrentStaffName
+        if pszCurrentStaffName == pszLastOutputStaffName:
+            pszOutputStaffName = ""
+        else:
+            pszLastOutputStaffName = pszCurrentStaffName
+
+        objOutputRows.append([pszOutputStaffName, pszProjectName, pszManhour])
+
+    if not objOutputRows:
+        raise ValueError("No output rows generated for Jobcan long-format TSV")
+
+    objOutputPath: Path = (
+        objResolvedInputPath.resolve().parent
+        / f"新_ローデータ_シート_step0001_{pszYearMonthText}.tsv"
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List[str]]) -> int:
+    process_jobcan_long_tsv_input_rawdata_sheet_step0001(objResolvedInputPath, objRows)
+    process_jobcan_long_tsv_input_new_rawdata_sheet_step0001(objResolvedInputPath, objRows)
     return 0
 
 
