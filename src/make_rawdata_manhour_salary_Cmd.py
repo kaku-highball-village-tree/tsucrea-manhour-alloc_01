@@ -12,6 +12,8 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+SALARY_PAYMENT_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^支給・控除等一覧表_給与_step0001_.+\.tsv$")
+NEW_RAWDATA_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0001_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -323,6 +325,58 @@ def process_jobcan_long_tsv_input(objResolvedInputPath: Path, objRows: List[List
     return 0
 
 
+def build_new_rawdata_step0002_output_path_from_step0001(objStep0001Path: Path) -> Path:
+    pszFileName: str = objStep0001Path.name
+    if "_step0001_" not in pszFileName:
+        raise ValueError(f"Input is not step0001 file: {objStep0001Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0001_", "_step0002_", 1)
+    return objStep0001Path.resolve().parent / pszOutputFileName
+
+
+def build_staff_code_by_name_from_salary_step0001(objSalaryStep0001Path: Path) -> dict[str, str]:
+    objRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
+    objStaffCodeByName: dict[str, str] = {}
+    for iRowIndex, objRow in enumerate(objRows):
+        if len(objRow) < 2:
+            continue
+        pszStaffName: str = (objRow[0] or "").strip()
+        pszStaffCode: str = (objRow[1] or "").strip()
+        if pszStaffName == "" or pszStaffCode == "":
+            continue
+        if iRowIndex == 0 and pszStaffName == "従業員名" and pszStaffCode == "スタッフコード":
+            continue
+        objStaffCodeByName[pszStaffName] = pszStaffCode
+    if not objStaffCodeByName:
+        raise ValueError(f"No staff codes found in salary step0001 TSV: {objSalaryStep0001Path}")
+    return objStaffCodeByName
+
+
+def process_new_rawdata_step0002_from_salary_and_new_rawdata_step0001(
+    objSalaryStep0001Path: Path,
+    objNewRawdataStep0001Path: Path,
+) -> int:
+    objStaffCodeByName: dict[str, str] = build_staff_code_by_name_from_salary_step0001(objSalaryStep0001Path)
+
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0001Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0001Path}")
+
+    objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
+    for objRow in objInputRows:
+        objNewRow: List[str] = list(objRow)
+        if objNewRow:
+            pszStaffNameCell: str = (objNewRow[0] or "").strip()
+            if pszStaffNameCell != "":
+                pszCurrentStaffName = pszStaffNameCell
+        pszStaffCode: str = objStaffCodeByName.get(pszCurrentStaffName, "") if pszCurrentStaffName != "" else ""
+        objOutputRows.append([pszStaffCode] + objNewRow)
+
+    objOutputPath: Path = build_new_rawdata_step0002_output_path_from_step0001(objNewRawdataStep0001Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_tsv_input(objResolvedInputPath: Path) -> int:
     objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
     if len(objRows) < 2:
@@ -430,8 +484,46 @@ def main() -> int:
     objArgs: argparse.Namespace = objParser.parse_args()
 
     iExitCode: int = 0
+    objHandledInputPaths: set[Path] = set()
+
+    objSalaryStep0001Paths: List[Path] = []
+    objNewRawdataStep0001Paths: List[Path] = []
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
+            objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
+        except Exception:
+            continue
+
+        if SALARY_PAYMENT_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objSalaryStep0001Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0001Paths.append(objResolvedInputPath)
+
+    if objSalaryStep0001Paths:
+        objSalaryStep0001Path: Path = objSalaryStep0001Paths[0]
+        for objNewRawdataStep0001Path in objNewRawdataStep0001Paths:
+            try:
+                process_new_rawdata_step0002_from_salary_and_new_rawdata_step0001(
+                    objSalaryStep0001Path,
+                    objNewRawdataStep0001Path,
+                )
+                objHandledInputPaths.add(objSalaryStep0001Path.resolve())
+                objHandledInputPaths.add(objNewRawdataStep0001Path.resolve())
+            except Exception as objException:
+                print(
+                    "Error: failed to process step0002 pair: {0} / {1}. Detail = {2}".format(
+                        objSalaryStep0001Path,
+                        objNewRawdataStep0001Path,
+                        objException,
+                    )
+                )
+                iExitCode = 1
+
+    for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
+        try:
+            objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
+            if objResolvedInputPath.resolve() in objHandledInputPaths:
+                continue
             process_single_input(pszInputXlsxPath)
         except Exception as objException:
             print(
