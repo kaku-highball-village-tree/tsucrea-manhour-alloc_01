@@ -281,6 +281,18 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
 
 
+def process_csv_input(objResolvedInputPath: Path) -> int:
+    objRows: List[List[str]] = []
+    with open(objResolvedInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
+        objReader = csv.reader(objFile)
+        for objRow in objReader:
+            objRows.append(list(objRow))
+
+    objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
+    write_sheet_to_tsv(objOutputPath, objRows)
+    return 0
+
+
 def process_single_input(pszInputXlsxPath: str) -> int:
     objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
     pszSuffix: str = objResolvedInputPath.suffix.lower()
@@ -288,8 +300,11 @@ def process_single_input(pszInputXlsxPath: str) -> int:
     if pszSuffix == ".tsv":
         return process_tsv_input(objResolvedInputPath)
 
+    if pszSuffix == ".csv":
+        return process_csv_input(objResolvedInputPath)
+
     if pszSuffix != ".xlsx":
-        raise ValueError(f"Unsupported extension (only .xlsx/.tsv): {objResolvedInputPath}")
+        raise ValueError(f"Unsupported extension (only .xlsx/.tsv/.csv): {objResolvedInputPath}")
 
     objBaseDirectoryPath: Path = objResolvedInputPath.resolve().parent
     pszExcelStem: str = objResolvedInputPath.stem
@@ -331,7 +346,7 @@ def main() -> int:
     objParser.add_argument(
         "pszInputXlsxPaths",
         nargs="+",
-        help="Input file paths (.xlsx or .tsv)",
+        help="Input file paths (.xlsx or .tsv or .csv)",
     )
     objArgs: argparse.Namespace = objParser.parse_args()
 
