@@ -337,6 +337,22 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
 
 
+def build_salary_payment_deduction_step0001_output_path_from_csv(
+    objResolvedInputPath: Path,
+) -> Path:
+    pszStem: str = objResolvedInputPath.stem
+    pszStem = re.sub(r"^作成用データ：", "", pszStem)
+
+    pszBaseName: str
+    pszDateLabel: str
+    pszBaseName, pszSeparator, pszDateLabel = pszStem.rpartition("_")
+    if pszSeparator == "" or pszBaseName == "" or pszDateLabel == "":
+        raise ValueError(f"Could not build salary step0001 output name from csv: {objResolvedInputPath}")
+
+    pszOutputFileName: str = f"{pszBaseName}_step0001_{pszDateLabel}.tsv"
+    return objResolvedInputPath.resolve().with_name(pszOutputFileName)
+
+
 def process_csv_input(objResolvedInputPath: Path) -> int:
     objRows: List[List[str]] = []
     with open(objResolvedInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
@@ -346,6 +362,13 @@ def process_csv_input(objResolvedInputPath: Path) -> int:
 
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
     write_sheet_to_tsv(objOutputPath, objRows)
+
+    if is_salary_payment_deduction_list_tsv(objRows):
+        objSalaryStep0001OutputPath: Path = build_salary_payment_deduction_step0001_output_path_from_csv(
+            objResolvedInputPath
+        )
+        write_sheet_to_tsv(objSalaryStep0001OutputPath, objRows)
+
     return 0
 
 
