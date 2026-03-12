@@ -397,6 +397,14 @@ def load_staff_code_by_name_from_management_accounting_file(
     raise ValueError(f"Unsupported management accounting extension: {objManagementAccountingPath}")
 
 
+def build_new_rawdata_step0003_output_path_from_step0002(objStep0002Path: Path) -> Path:
+    pszFileName: str = objStep0002Path.name
+    if "_step0002_" not in pszFileName:
+        raise ValueError(f"Input is not step0002 file: {objStep0002Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0002_", "_step0003_", 1)
+    return objStep0002Path.resolve().parent / pszOutputFileName
+
+
 def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
     objNewRawdataStep0002Path: Path,
     objStaffCodeByName: dict[str, str],
@@ -429,7 +437,8 @@ def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
 
         objOutputRows.append(objNewRow)
 
-    write_sheet_to_tsv(objNewRawdataStep0002Path, objOutputRows)
+    objOutputPath: Path = build_new_rawdata_step0003_output_path_from_step0002(objNewRawdataStep0002Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
 
