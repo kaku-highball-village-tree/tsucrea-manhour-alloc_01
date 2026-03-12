@@ -144,6 +144,14 @@ def write_sheet_to_tsv(objOutputPath: Path, objRows: List[List[object]]) -> None
             objWriter.writerow([normalize_cell_value(objValue) for objValue in objRow])
 
 
+def convert_csv_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[str]]) -> None:
+    write_sheet_to_tsv(objOutputPath, objRows)
+
+
+def convert_xlsx_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[object]]) -> None:
+    write_sheet_to_tsv(objOutputPath, objRows)
+
+
 def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
     objRows: List[List[str]] = []
     with open(objInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
@@ -263,7 +271,7 @@ def process_management_accounting_manhour_csv_input(
     objRows: List[List[str]],
 ) -> int:
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
-    write_sheet_to_tsv(objOutputPath, objRows)
+    convert_csv_rows_to_tsv_file(objOutputPath, objRows)
     return 0
 
 
@@ -479,13 +487,13 @@ def process_csv_input(objResolvedInputPath: Path) -> int:
         )
 
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
-    write_sheet_to_tsv(objOutputPath, objRows)
+    convert_csv_rows_to_tsv_file(objOutputPath, objRows)
 
     if is_salary_payment_deduction_list_tsv(objRows):
         objSalaryStep0001OutputPath: Path = build_salary_payment_deduction_step0001_output_path_from_csv(
             objResolvedInputPath
         )
-        write_sheet_to_tsv(objSalaryStep0001OutputPath, objRows)
+        convert_csv_rows_to_tsv_file(objSalaryStep0001OutputPath, objRows)
 
     return 0
 
@@ -531,7 +539,7 @@ def process_single_input(pszInputXlsxPath: str) -> int:
                 objUsedPaths,
             )
             objRows: List[List[object]] = [list(objRow) for objRow in objWorksheet.iter_rows(values_only=True)]
-            write_sheet_to_tsv(objOutputPath, objRows)
+            convert_xlsx_rows_to_tsv_file(objOutputPath, objRows)
     finally:
         objWorkbook.close()
 
