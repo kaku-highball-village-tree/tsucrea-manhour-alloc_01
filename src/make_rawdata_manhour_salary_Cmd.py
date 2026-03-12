@@ -14,6 +14,7 @@ DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
 SALARY_PAYMENT_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^支給・控除等一覧表_給与_step0001_.+\.tsv$")
 NEW_RAWDATA_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0001_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0002_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0002_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -295,6 +296,150 @@ def is_management_accounting_manhour_csv(objRows: List[List[str]]) -> bool:
             return True
 
     return False
+
+
+def is_management_accounting_manhour_tsv(objRows: List[List[str]]) -> bool:
+    return is_management_accounting_manhour_csv(objRows)
+
+
+def is_management_accounting_manhour_xlsx_sheet(objRows: List[List[object]]) -> bool:
+    objStringRows: List[List[str]] = []
+    for objRow in objRows:
+        objStringRows.append([
+            ("" if objValue is None else str(format_xlsx_cell_value_for_tsv(objValue))).strip()
+            for objValue in objRow
+        ])
+    return is_management_accounting_manhour_csv(objStringRows)
+
+
+def build_staff_code_by_name_from_management_accounting_rows(
+    objRows: List[List[str]],
+) -> dict[str, str]:
+    if not objRows:
+        return {}
+
+    objHeaderRow: List[str] = [(pszCell or "").strip() for pszCell in objRows[0]]
+    if "スタッフコード" not in objHeaderRow or "姓 名" not in objHeaderRow:
+        return {}
+
+    iStaffCodeIndex: int = objHeaderRow.index("スタッフコード")
+    iStaffNameIndex: int = objHeaderRow.index("姓 名")
+
+    objStaffCodeByName: dict[str, str] = {}
+    for objRow in objRows[1:]:
+        if iStaffCodeIndex >= len(objRow) or iStaffNameIndex >= len(objRow):
+            continue
+        pszStaffCode: str = (objRow[iStaffCodeIndex] or "").strip()
+        pszStaffName: str = (objRow[iStaffNameIndex] or "").strip()
+        if pszStaffName == "" or pszStaffCode == "":
+            continue
+        if re.match(r"^\d+$", pszStaffCode) is None:
+            continue
+        if pszStaffName not in objStaffCodeByName:
+            objStaffCodeByName[pszStaffName] = pszStaffCode
+
+    return objStaffCodeByName
+
+
+def load_staff_code_by_name_from_management_accounting_file(
+    objManagementAccountingPath: Path,
+) -> dict[str, str]:
+    pszSuffix: str = objManagementAccountingPath.suffix.lower()
+
+    if pszSuffix == ".tsv":
+        objRows: List[List[str]] = read_tsv_rows(objManagementAccountingPath)
+        if not is_management_accounting_manhour_tsv(objRows):
+            raise ValueError(f"Not management accounting manhour TSV: {objManagementAccountingPath}")
+        return build_staff_code_by_name_from_management_accounting_rows(objRows)
+
+    if pszSuffix == ".csv":
+        objRows = []
+        with open(objManagementAccountingPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
+            objReader = csv.reader(objFile)
+            for objRow in objReader:
+                objRows.append(list(objRow))
+        if not is_management_accounting_manhour_csv(objRows):
+            raise ValueError(f"Not management accounting manhour CSV: {objManagementAccountingPath}")
+        return build_staff_code_by_name_from_management_accounting_rows(objRows)
+
+    if pszSuffix == ".xlsx":
+        try:
+            import openpyxl
+        except Exception as objException:
+            raise RuntimeError(f"Failed to import openpyxl: {objException}") from objException
+
+        objWorkbook = openpyxl.load_workbook(
+            filename=objManagementAccountingPath,
+            read_only=True,
+            data_only=True,
+        )
+        try:
+            for objWorksheet in objWorkbook.worksheets:
+                objRowsXlsx: List[List[object]] = [
+                    list(objRow)
+                    for objRow in objWorksheet.iter_rows(values_only=True)
+                ]
+                if not is_management_accounting_manhour_xlsx_sheet(objRowsXlsx):
+                    continue
+
+                objRowsString: List[List[str]] = []
+                for objRow in objRowsXlsx:
+                    objRowsString.append([
+                        "" if objValue is None else str(format_xlsx_cell_value_for_tsv(objValue)).strip()
+                        for objValue in objRow
+                    ])
+                return build_staff_code_by_name_from_management_accounting_rows(objRowsString)
+        finally:
+            objWorkbook.close()
+
+        raise ValueError(f"No management accounting manhour sheet found in XLSX: {objManagementAccountingPath}")
+
+    raise ValueError(f"Unsupported management accounting extension: {objManagementAccountingPath}")
+
+
+def build_new_rawdata_step0003_output_path_from_step0002(objStep0002Path: Path) -> Path:
+    pszFileName: str = objStep0002Path.name
+    if "_step0002_" not in pszFileName:
+        raise ValueError(f"Input is not step0002 file: {objStep0002Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0002_", "_step0003_", 1)
+    return objStep0002Path.resolve().parent / pszOutputFileName
+
+
+def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
+    objNewRawdataStep0002Path: Path,
+    objStaffCodeByName: dict[str, str],
+) -> int:
+    if not objStaffCodeByName:
+        raise ValueError("No staff code mapping from management accounting file")
+
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0002Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0002Path}")
+
+    objOutputRows: List[List[str]] = []
+    pszCurrentStaffName: str = ""
+    for objRow in objInputRows:
+        objNewRow: List[str] = list(objRow)
+        if not objNewRow:
+            objOutputRows.append(objNewRow)
+            continue
+
+        if len(objNewRow) >= 2:
+            pszStaffNameCell: str = (objNewRow[1] or "").strip()
+            if pszStaffNameCell != "":
+                pszCurrentStaffName = pszStaffNameCell
+
+        pszStaffCodeCell: str = (objNewRow[0] or "").strip()
+        if pszStaffCodeCell == "" and pszCurrentStaffName != "":
+            pszFilledCode: str = objStaffCodeByName.get(pszCurrentStaffName, "")
+            if pszFilledCode != "":
+                objNewRow[0] = pszFilledCode
+
+        objOutputRows.append(objNewRow)
+
+    objOutputPath: Path = build_new_rawdata_step0003_output_path_from_step0002(objNewRawdataStep0002Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
 
 
 def process_management_accounting_manhour_csv_input(
@@ -591,6 +736,8 @@ def main() -> int:
 
     objSalaryStep0001Paths: List[Path] = []
     objNewRawdataStep0001Paths: List[Path] = []
+    objNewRawdataStep0002Paths: List[Path] = []
+    objManagementAccountingCandidatePaths: List[Path] = []
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
             objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
@@ -601,6 +748,11 @@ def main() -> int:
             objSalaryStep0001Paths.append(objResolvedInputPath)
         if NEW_RAWDATA_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
             objNewRawdataStep0001Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0002_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0002Paths.append(objResolvedInputPath)
+
+        if objResolvedInputPath.suffix.lower() in (".tsv", ".csv", ".xlsx"):
+            objManagementAccountingCandidatePaths.append(objResolvedInputPath)
 
     if objSalaryStep0001Paths:
         objSalaryStep0001Path: Path = objSalaryStep0001Paths[0]
@@ -621,6 +773,36 @@ def main() -> int:
                     )
                 )
                 iExitCode = 1
+
+    if objNewRawdataStep0002Paths:
+        for objNewRawdataStep0002Path in objNewRawdataStep0002Paths:
+            for objManagementAccountingCandidatePath in objManagementAccountingCandidatePaths:
+                if objManagementAccountingCandidatePath.resolve() == objNewRawdataStep0002Path.resolve():
+                    continue
+                try:
+                    objStaffCodeByName: dict[str, str] = load_staff_code_by_name_from_management_accounting_file(
+                        objManagementAccountingCandidatePath
+                    )
+                except Exception:
+                    continue
+
+                try:
+                    fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
+                        objNewRawdataStep0002Path,
+                        objStaffCodeByName,
+                    )
+                    objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
+                    objHandledInputPaths.add(objManagementAccountingCandidatePath.resolve())
+                except Exception as objException:
+                    print(
+                        "Error: failed to fill missing step0002 staff codes: {0} / {1}. Detail = {2}".format(
+                            objNewRawdataStep0002Path,
+                            objManagementAccountingCandidatePath,
+                            objException,
+                        )
+                    )
+                    iExitCode = 1
+                break
 
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
