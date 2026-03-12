@@ -42,6 +42,19 @@ SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "一般拠出金",
     "子育拠出金",
 )
+MANAGEMENT_ACCOUNTING_MANHOUR_REQUIRED_HEADERS: tuple[str, ...] = (
+    "日時",
+    "スタッフコード",
+    "姓 名",
+    "所属グループ名",
+    "スタッフ種別",
+    "総労働時間",
+    "プロジェクトコード",
+    "プロジェクト名",
+    "タスクコード",
+    "タスク名",
+    "工数",
+)
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -207,6 +220,51 @@ def is_salary_payment_deduction_list_tsv(objRows: List[List[str]]) -> bool:
             bHasStaffCodeValue = True
             break
     return bHasStaffCodeValue
+
+
+def is_management_accounting_manhour_csv(objRows: List[List[str]]) -> bool:
+    if len(objRows) < 2:
+        return False
+
+    objHeaderRow: List[str] = objRows[0]
+    objHeaderSet: set[str] = {
+        (pszCell or "").strip()
+        for pszCell in objHeaderRow
+        if (pszCell or "").strip() != ""
+    }
+    if not all(
+        pszRequiredHeader in objHeaderSet
+        for pszRequiredHeader in MANAGEMENT_ACCOUNTING_MANHOUR_REQUIRED_HEADERS
+    ):
+        return False
+
+    iStaffCodeIndex: int = objHeaderRow.index("スタッフコード")
+    iManhourIndex: int = objHeaderRow.index("工数")
+
+    bHasStaffCode: bool = False
+    bHasManhour: bool = False
+    for objRow in objRows[1:]:
+        if iStaffCodeIndex < len(objRow):
+            pszStaffCode: str = (objRow[iStaffCodeIndex] or "").strip()
+            if re.match(r"^\d+$", pszStaffCode) is not None:
+                bHasStaffCode = True
+        if iManhourIndex < len(objRow):
+            pszManhour: str = (objRow[iManhourIndex] or "").strip()
+            if re.match(r"^\d+:\d{2}(?::\d{2})?$", pszManhour) is not None:
+                bHasManhour = True
+        if bHasStaffCode and bHasManhour:
+            return True
+
+    return False
+
+
+def process_management_accounting_manhour_csv_input(
+    objResolvedInputPath: Path,
+    objRows: List[List[str]],
+) -> int:
+    objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
+    write_sheet_to_tsv(objOutputPath, objRows)
+    return 0
 
 
 def extract_year_month_text_from_path(objInputPath: Path) -> str:
@@ -413,6 +471,12 @@ def process_csv_input(objResolvedInputPath: Path) -> int:
         objReader = csv.reader(objFile)
         for objRow in objReader:
             objRows.append(list(objRow))
+
+    if is_management_accounting_manhour_csv(objRows):
+        return process_management_accounting_manhour_csv_input(
+            objResolvedInputPath,
+            objRows,
+        )
 
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
     write_sheet_to_tsv(objOutputPath, objRows)
