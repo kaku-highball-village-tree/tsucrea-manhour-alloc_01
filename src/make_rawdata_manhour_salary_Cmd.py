@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List
 
@@ -148,8 +148,39 @@ def convert_csv_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[str]]) 
     write_sheet_to_tsv(objOutputPath, objRows)
 
 
+def format_xlsx_cell_value_for_tsv(objValue: object) -> object:
+    if isinstance(objValue, datetime):
+        if (
+            objValue.hour == 0
+            and objValue.minute == 0
+            and objValue.second == 0
+            and objValue.microsecond == 0
+        ):
+            return objValue.strftime("%Y/%m/%d")
+        return objValue.strftime("%Y/%m/%d %H:%M:%S")
+
+    if isinstance(objValue, date):
+        return objValue.strftime("%Y/%m/%d")
+
+    if isinstance(objValue, time):
+        if objValue.second == 0 and objValue.microsecond == 0:
+            return f"{objValue.hour}:{objValue.minute:02d}"
+        return f"{objValue.hour}:{objValue.minute:02d}:{objValue.second:02d}"
+
+    if isinstance(objValue, timedelta):
+        pszText: str = format_timedelta_as_h_mm_ss(objValue)
+        return re.sub(r"^(\d+):(\d{2}):00$", r"\1:\2", pszText)
+
+    return objValue
+
+
 def convert_xlsx_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[object]]) -> None:
-    write_sheet_to_tsv(objOutputPath, objRows)
+    objNormalizedRows: List[List[object]] = []
+    for objRow in objRows:
+        objNormalizedRows.append([
+            format_xlsx_cell_value_for_tsv(objValue) for objValue in objRow
+        ])
+    write_sheet_to_tsv(objOutputPath, objNormalizedRows)
 
 
 def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
