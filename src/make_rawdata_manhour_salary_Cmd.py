@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import List
 
@@ -144,6 +144,45 @@ def write_sheet_to_tsv(objOutputPath: Path, objRows: List[List[object]]) -> None
             objWriter.writerow([normalize_cell_value(objValue) for objValue in objRow])
 
 
+def convert_csv_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[str]]) -> None:
+    write_sheet_to_tsv(objOutputPath, objRows)
+
+
+def format_xlsx_cell_value_for_tsv(objValue: object) -> object:
+    if isinstance(objValue, datetime):
+        if (
+            objValue.hour == 0
+            and objValue.minute == 0
+            and objValue.second == 0
+            and objValue.microsecond == 0
+        ):
+            return objValue.strftime("%Y/%m/%d")
+        return objValue.strftime("%Y/%m/%d %H:%M:%S")
+
+    if isinstance(objValue, date):
+        return objValue.strftime("%Y/%m/%d")
+
+    if isinstance(objValue, time):
+        if objValue.second == 0 and objValue.microsecond == 0:
+            return f"{objValue.hour}:{objValue.minute:02d}"
+        return f"{objValue.hour}:{objValue.minute:02d}:{objValue.second:02d}"
+
+    if isinstance(objValue, timedelta):
+        pszText: str = format_timedelta_as_h_mm_ss(objValue)
+        return re.sub(r"^(\d+):(\d{2}):00$", r"\1:\2", pszText)
+
+    return objValue
+
+
+def convert_xlsx_rows_to_tsv_file(objOutputPath: Path, objRows: List[List[object]]) -> None:
+    objNormalizedRows: List[List[object]] = []
+    for objRow in objRows:
+        objNormalizedRows.append([
+            format_xlsx_cell_value_for_tsv(objValue) for objValue in objRow
+        ])
+    write_sheet_to_tsv(objOutputPath, objNormalizedRows)
+
+
 def read_tsv_rows(objInputPath: Path) -> List[List[str]]:
     objRows: List[List[str]] = []
     with open(objInputPath, mode="r", encoding="utf-8-sig", newline="") as objFile:
@@ -263,7 +302,7 @@ def process_management_accounting_manhour_csv_input(
     objRows: List[List[str]],
 ) -> int:
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
-    write_sheet_to_tsv(objOutputPath, objRows)
+    convert_csv_rows_to_tsv_file(objOutputPath, objRows)
     return 0
 
 
@@ -479,13 +518,13 @@ def process_csv_input(objResolvedInputPath: Path) -> int:
         )
 
     objOutputPath: Path = objResolvedInputPath.resolve().with_suffix(".tsv")
-    write_sheet_to_tsv(objOutputPath, objRows)
+    convert_csv_rows_to_tsv_file(objOutputPath, objRows)
 
     if is_salary_payment_deduction_list_tsv(objRows):
         objSalaryStep0001OutputPath: Path = build_salary_payment_deduction_step0001_output_path_from_csv(
             objResolvedInputPath
         )
-        write_sheet_to_tsv(objSalaryStep0001OutputPath, objRows)
+        convert_csv_rows_to_tsv_file(objSalaryStep0001OutputPath, objRows)
 
     return 0
 
@@ -531,7 +570,7 @@ def process_single_input(pszInputXlsxPath: str) -> int:
                 objUsedPaths,
             )
             objRows: List[List[object]] = [list(objRow) for objRow in objWorksheet.iter_rows(values_only=True)]
-            write_sheet_to_tsv(objOutputPath, objRows)
+            convert_xlsx_rows_to_tsv_file(objOutputPath, objRows)
     finally:
         objWorkbook.close()
 
