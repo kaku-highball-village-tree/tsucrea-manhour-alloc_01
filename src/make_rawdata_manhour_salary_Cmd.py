@@ -705,7 +705,7 @@ def build_new_rawdata_step0003_name_mapping_output_path(objStep0003Path: Path) -
     if not NEW_RAWDATA_STEP0003_FILE_PATTERN.match(pszFileName):
         raise ValueError(f"Input is not step0003 file: {objStep0003Path}")
     pszStem: str = objStep0003Path.stem
-    return objStep0003Path.resolve().parent / f"{pszStem}_旧姓現性対応表.tsv"
+    return objStep0003Path.resolve().parent / f"{pszStem}_工数の姓_給与の姓_対応表.tsv"
 
 
 def process_salary_step0001_for_step0003_old_new_name_mapping(
