@@ -681,6 +681,60 @@ def build_staff_code_by_name_from_salary_step0001(objSalaryStep0001Path: Path) -
     return objStaffCodeByName
 
 
+def build_staff_name_by_code_from_salary_step0001(objSalaryStep0001Path: Path) -> dict[str, str]:
+    objRows: List[List[str]] = read_tsv_rows(objSalaryStep0001Path)
+    objStaffNameByCode: dict[str, str] = {}
+    for iRowIndex, objRow in enumerate(objRows):
+        if len(objRow) < 2:
+            continue
+        pszStaffName: str = (objRow[0] or "").strip()
+        pszStaffCode: str = (objRow[1] or "").strip()
+        if pszStaffName == "" or pszStaffCode == "":
+            continue
+        if iRowIndex == 0 and pszStaffName == "従業員名" and pszStaffCode == "スタッフコード":
+            continue
+        if pszStaffCode not in objStaffNameByCode:
+            objStaffNameByCode[pszStaffCode] = pszStaffName
+    if not objStaffNameByCode:
+        raise ValueError(f"No staff names found in salary step0001 TSV: {objSalaryStep0001Path}")
+    return objStaffNameByCode
+
+
+def build_new_rawdata_step0003_name_mapping_output_path(objStep0003Path: Path) -> Path:
+    pszFileName: str = objStep0003Path.name
+    if not NEW_RAWDATA_STEP0003_FILE_PATTERN.match(pszFileName):
+        raise ValueError(f"Input is not step0003 file: {objStep0003Path}")
+    pszStem: str = objStep0003Path.stem
+    return objStep0003Path.resolve().parent / f"{pszStem}_旧姓現性対応表.tsv"
+
+
+def process_step0003_name_mapping_from_salary_step0001(
+    objNewRawdataStep0003Path: Path,
+    objSalaryStep0001Path: Path,
+) -> int:
+    objStaffNameByCode: dict[str, str] = build_staff_name_by_code_from_salary_step0001(objSalaryStep0001Path)
+
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0003Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0003Path}")
+
+    objOutputRows: List[List[str]] = [["スタッフコード", "氏名", "氏名"]]
+    pszCurrentStaffName: str = ""
+    for objRow in objInputRows:
+        pszStaffCode: str = (objRow[0] or "").strip() if len(objRow) >= 1 else ""
+        if len(objRow) >= 2:
+            pszStaffNameCell: str = (objRow[1] or "").strip()
+            if pszStaffNameCell != "":
+                pszCurrentStaffName = pszStaffNameCell
+        pszStep0003StaffName: str = pszCurrentStaffName
+        pszSalaryStaffName: str = objStaffNameByCode.get(pszStaffCode, "") if pszStaffCode != "" else ""
+        objOutputRows.append([pszStaffCode, pszStep0003StaffName, pszSalaryStaffName])
+
+    objOutputPath: Path = build_new_rawdata_step0003_name_mapping_output_path(objNewRawdataStep0003Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_new_rawdata_step0002_from_salary_and_new_rawdata_step0001(
     objSalaryStep0001Path: Path,
     objNewRawdataStep0001Path: Path,
@@ -869,45 +923,52 @@ def main() -> int:
                 iExitCode = 1
 
     if objNewRawdataStep0002Paths:
-        for objNewRawdataStep0002Path in objNewRawdataStep0002Paths:
-            for objManagementAccountingCandidatePath in objManagementAccountingCandidatePaths:
-                if objManagementAccountingCandidatePath.resolve() == objNewRawdataStep0002Path.resolve():
-                    continue
-                try:
-                    objStaffCodeByName: dict[str, str] = load_staff_code_by_name_from_management_accounting_file(
-                        objManagementAccountingCandidatePath
-                    )
-                except Exception:
-                    continue
-
-                try:
-                    fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
-                        objNewRawdataStep0002Path,
-                        objStaffCodeByName,
-                    )
-                    objNewRawdataStep0003Path: Path = build_new_rawdata_step0003_output_path_from_step0002(
-                        objNewRawdataStep0002Path
-                    )
-                    process_new_rawdata_step0004_from_step0003(objNewRawdataStep0003Path)
-                    objNewRawdataStep0004Path: Path = build_new_rawdata_step0004_output_path_from_step0003(
-                        objNewRawdataStep0003Path
-                    )
-                    process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
-                    objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
-                    objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
-                    objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
-                    objHandledInputPaths.add(objManagementAccountingCandidatePath.resolve())
-                except Exception as objException:
-                    print(
-                        "Error: failed to fill missing step0002 staff codes: {0} / {1}. Detail = {2}".format(
-                            objNewRawdataStep0002Path,
-                            objManagementAccountingCandidatePath,
-                            objException,
+        if not objSalaryStep0001Paths:
+            print("Error: salary step0001 TSV is required to process step0003 from step0002")
+            iExitCode = 1
+        else:
+            for objNewRawdataStep0002Path in objNewRawdataStep0002Paths:
+                for objManagementAccountingCandidatePath in objManagementAccountingCandidatePaths:
+                    if objManagementAccountingCandidatePath.resolve() == objNewRawdataStep0002Path.resolve():
+                        continue
+                    try:
+                        objStaffCodeByName: dict[str, str] = load_staff_code_by_name_from_management_accounting_file(
+                            objManagementAccountingCandidatePath
                         )
-                    )
-                    iExitCode = 1
-                break
+                    except Exception:
+                        continue
 
+                    try:
+                        fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
+                            objNewRawdataStep0002Path,
+                            objStaffCodeByName,
+                        )
+                        objNewRawdataStep0003Path: Path = build_new_rawdata_step0003_output_path_from_step0002(
+                            objNewRawdataStep0002Path
+                        )
+                        process_step0003_name_mapping_from_salary_step0001(
+                            objNewRawdataStep0003Path,
+                            objSalaryStep0001Paths[0],
+                        )
+                        process_new_rawdata_step0004_from_step0003(objNewRawdataStep0003Path)
+                        objNewRawdataStep0004Path: Path = build_new_rawdata_step0004_output_path_from_step0003(
+                            objNewRawdataStep0003Path
+                        )
+                        process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
+                        objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
+                        objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
+                        objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
+                        objHandledInputPaths.add(objManagementAccountingCandidatePath.resolve())
+                    except Exception as objException:
+                        print(
+                            "Error: failed to fill missing step0002 staff codes: {0} / {1}. Detail = {2}".format(
+                                objNewRawdataStep0002Path,
+                                objManagementAccountingCandidatePath,
+                                objException,
+                            )
+                        )
+                        iExitCode = 1
+                    break
     if objNewRawdataStep0003Paths:
         for objNewRawdataStep0003Path in objNewRawdataStep0003Paths:
             if objNewRawdataStep0003Path.resolve() in objHandledInputPaths:
