@@ -424,15 +424,17 @@ def process_new_rawdata_step0004_from_step0003(
     objOutputRows: List[List[str]] = []
     objSeenStaffCodes: set[str] = set()
     for objRow in objInputRows:
-        objNewRow: List[str] = list(objRow)
-        if objNewRow:
-            pszStaffCodeCell: str = (objNewRow[0] or "").strip()
+        objOriginalRow: List[str] = list(objRow)
+
+        pszDisplayStaffCode: str = ""
+        if objOriginalRow:
+            pszStaffCodeCell: str = (objOriginalRow[0] or "").strip()
             if pszStaffCodeCell != "":
-                if pszStaffCodeCell in objSeenStaffCodes:
-                    objNewRow[0] = ""
-                else:
+                if pszStaffCodeCell not in objSeenStaffCodes:
+                    pszDisplayStaffCode = pszStaffCodeCell
                     objSeenStaffCodes.add(pszStaffCodeCell)
-        objOutputRows.append(objNewRow)
+
+        objOutputRows.append([pszDisplayStaffCode] + objOriginalRow)
 
     objOutputPath: Path = build_new_rawdata_step0004_output_path_from_step0003(objNewRawdataStep0003Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
