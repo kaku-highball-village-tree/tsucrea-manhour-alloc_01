@@ -16,6 +16,7 @@ SALARY_PAYMENT_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^支給・�
 NEW_RAWDATA_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0001_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0002_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0002_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0003_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0003_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0004_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0004_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -441,6 +442,57 @@ def process_new_rawdata_step0004_from_step0003(
     return 0
 
 
+def build_new_rawdata_step0005_output_path_from_step0004(objStep0004Path: Path) -> Path:
+    pszFileName: str = objStep0004Path.name
+    if "_step0004_" not in pszFileName:
+        raise ValueError(f"Input is not step0004 file: {objStep0004Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0004_", "_step0005_", 1)
+    return objStep0004Path.resolve().parent / pszOutputFileName
+
+
+def parse_numeric_text(pszText: str) -> float | None:
+    pszValue: str = (pszText or "").strip()
+    if pszValue == "":
+        return None
+    if re.match(r"^-?\d+(?:\.\d+)?$", pszValue) is None:
+        return None
+    try:
+        return float(pszValue)
+    except Exception:
+        return None
+
+
+def process_new_rawdata_step0005_from_step0004(
+    objNewRawdataStep0004Path: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0004Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0004Path}")
+
+    objRankTargets: List[float] = []
+    for objRow in objInputRows:
+        if not objRow:
+            continue
+        fValue = parse_numeric_text(objRow[0])
+        if fValue is not None:
+            objRankTargets.append(fValue)
+
+    objOutputRows: List[List[str]] = []
+    for objRow in objInputRows:
+        objNewRow: List[str] = list(objRow)
+        pszRankText: str = ""
+        if objNewRow:
+            fValue = parse_numeric_text(objNewRow[0])
+            if fValue is not None:
+                iRank: int = 1 + sum(1 for fTarget in objRankTargets if fTarget < fValue)
+                pszRankText = str(iRank)
+        objOutputRows.append([pszRankText] + objNewRow)
+
+    objOutputPath: Path = build_new_rawdata_step0005_output_path_from_step0004(objNewRawdataStep0004Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
     objNewRawdataStep0002Path: Path,
     objStaffCodeByName: dict[str, str],
@@ -774,6 +826,7 @@ def main() -> int:
     objNewRawdataStep0001Paths: List[Path] = []
     objNewRawdataStep0002Paths: List[Path] = []
     objNewRawdataStep0003Paths: List[Path] = []
+    objNewRawdataStep0004Paths: List[Path] = []
     objManagementAccountingCandidatePaths: List[Path] = []
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
@@ -789,6 +842,8 @@ def main() -> int:
             objNewRawdataStep0002Paths.append(objResolvedInputPath)
         if NEW_RAWDATA_STEP0003_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
             objNewRawdataStep0003Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0004_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0004Paths.append(objResolvedInputPath)
 
         if objResolvedInputPath.suffix.lower() in (".tsv", ".csv", ".xlsx"):
             objManagementAccountingCandidatePaths.append(objResolvedInputPath)
@@ -834,8 +889,13 @@ def main() -> int:
                         objNewRawdataStep0002Path
                     )
                     process_new_rawdata_step0004_from_step0003(objNewRawdataStep0003Path)
+                    objNewRawdataStep0004Path: Path = build_new_rawdata_step0004_output_path_from_step0003(
+                        objNewRawdataStep0003Path
+                    )
+                    process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
                     objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
                     objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
+                    objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
                     objHandledInputPaths.add(objManagementAccountingCandidatePath.resolve())
                 except Exception as objException:
                     print(
@@ -854,11 +914,32 @@ def main() -> int:
                 continue
             try:
                 process_new_rawdata_step0004_from_step0003(objNewRawdataStep0003Path)
+                objNewRawdataStep0004Path: Path = build_new_rawdata_step0004_output_path_from_step0003(
+                    objNewRawdataStep0003Path
+                )
+                process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
                 objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
+                objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
             except Exception as objException:
                 print(
                     "Error: failed to process step0004 from step0003: {0}. Detail = {1}".format(
                         objNewRawdataStep0003Path,
+                        objException,
+                    )
+                )
+                iExitCode = 1
+
+    if objNewRawdataStep0004Paths:
+        for objNewRawdataStep0004Path in objNewRawdataStep0004Paths:
+            if objNewRawdataStep0004Path.resolve() in objHandledInputPaths:
+                continue
+            try:
+                process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
+                objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
+            except Exception as objException:
+                print(
+                    "Error: failed to process step0005 from step0004: {0}. Detail = {1}".format(
+                        objNewRawdataStep0004Path,
                         objException,
                     )
                 )
