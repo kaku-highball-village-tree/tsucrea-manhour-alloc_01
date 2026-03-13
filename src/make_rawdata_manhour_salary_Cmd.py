@@ -719,16 +719,20 @@ def process_salary_step0001_for_step0003_old_new_name_mapping(
         raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0003Path}")
 
     objOutputRows: List[List[str]] = [["スタッフコード", "氏名", "氏名"]]
-    pszCurrentStaffName: str = ""
+    objSeenStaffCodes: set[str] = set()
     for objRow in objInputRows:
         pszStaffCode: str = (objRow[0] or "").strip() if len(objRow) >= 1 else ""
-        if len(objRow) >= 2:
-            pszStaffNameCell: str = (objRow[1] or "").strip()
-            if pszStaffNameCell != "":
-                pszCurrentStaffName = pszStaffNameCell
-        pszStep0003StaffName: str = pszCurrentStaffName
-        pszSalaryStaffName: str = objStaffNameByCode.get(pszStaffCode, "") if pszStaffCode != "" else ""
+        pszStep0003StaffName: str = (objRow[1] or "").strip() if len(objRow) >= 2 else ""
+        if pszStep0003StaffName == "":
+            continue
+        if pszStaffCode == "":
+            continue
+        if pszStaffCode in objSeenStaffCodes:
+            continue
+
+        pszSalaryStaffName: str = objStaffNameByCode.get(pszStaffCode, "")
         objOutputRows.append([pszStaffCode, pszStep0003StaffName, pszSalaryStaffName])
+        objSeenStaffCodes.add(pszStaffCode)
 
     objOutputPath: Path = build_new_rawdata_step0003_name_mapping_output_path(objNewRawdataStep0003Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
