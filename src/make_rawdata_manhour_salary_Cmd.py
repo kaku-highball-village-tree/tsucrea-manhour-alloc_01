@@ -708,6 +708,33 @@ def build_new_rawdata_step0003_name_mapping_output_path(objStep0003Path: Path) -
     return objStep0003Path.resolve().parent / f"{pszStem}_工数の姓_給与の姓_対応表.tsv"
 
 
+def build_new_rawdata_step0003_name_mapping_sorted_output_path(objStep0003NameMappingPath: Path) -> Path:
+    pszFileName: str = objStep0003NameMappingPath.name
+    pszSuffix: str = "_工数の姓_給与の姓_対応表.tsv"
+    if not pszFileName.endswith(pszSuffix):
+        raise ValueError(f"Input is not step0003 name mapping file: {objStep0003NameMappingPath}")
+    pszOutputFileName: str = pszFileName[:-4] + "_昇順.tsv"
+    return objStep0003NameMappingPath.resolve().parent / pszOutputFileName
+
+
+def process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(
+    objStep0003NameMappingPath: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objStep0003NameMappingPath)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objStep0003NameMappingPath}")
+
+    objHeaderRow: List[str] = list(objInputRows[0])
+    objDataRows: List[List[str]] = [list(objRow) for objRow in objInputRows[1:]]
+
+    objDataRows.sort(key=lambda objRow: (objRow[0] or "").strip() if len(objRow) >= 1 else "")
+
+    objOutputRows: List[List[str]] = [objHeaderRow] + objDataRows
+    objOutputPath: Path = build_new_rawdata_step0003_name_mapping_sorted_output_path(objStep0003NameMappingPath)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_salary_step0001_for_step0003_old_new_name_mapping(
     objNewRawdataStep0003Path: Path,
     objSalaryStep0001Path: Path,
@@ -736,6 +763,7 @@ def process_salary_step0001_for_step0003_old_new_name_mapping(
 
     objOutputPath: Path = build_new_rawdata_step0003_name_mapping_output_path(objNewRawdataStep0003Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
+    process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(objOutputPath)
     return 0
 
 
