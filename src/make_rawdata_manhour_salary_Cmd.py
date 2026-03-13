@@ -708,7 +708,7 @@ def build_new_rawdata_step0003_name_mapping_output_path(objStep0003Path: Path) -
     return objStep0003Path.resolve().parent / f"{pszStem}_旧姓現性対応表.tsv"
 
 
-def process_step0003_name_mapping_from_salary_step0001(
+def process_salary_step0001_for_step0003_old_new_name_mapping(
     objNewRawdataStep0003Path: Path,
     objSalaryStep0001Path: Path,
 ) -> int:
@@ -946,7 +946,7 @@ def main() -> int:
                         objNewRawdataStep0003Path: Path = build_new_rawdata_step0003_output_path_from_step0002(
                             objNewRawdataStep0002Path
                         )
-                        process_step0003_name_mapping_from_salary_step0001(
+                        process_salary_step0001_for_step0003_old_new_name_mapping(
                             objNewRawdataStep0003Path,
                             objSalaryStep0001Paths[0],
                         )
@@ -1010,6 +1010,8 @@ def main() -> int:
         try:
             objResolvedInputPath: Path = resolve_existing_input_path(pszInputXlsxPath)
             if objResolvedInputPath.resolve() in objHandledInputPaths:
+                continue
+            if SALARY_PAYMENT_STEP0001_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
                 continue
             process_single_input(pszInputXlsxPath)
         except Exception as objException:
