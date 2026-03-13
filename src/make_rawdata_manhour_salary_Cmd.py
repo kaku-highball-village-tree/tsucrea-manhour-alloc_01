@@ -727,7 +727,7 @@ def process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(
     objHeaderRow: List[str] = list(objInputRows[0])
     objDataRows: List[List[str]] = [list(objRow) for objRow in objInputRows[1:]]
 
-    objDataRows.sort(key=lambda objRow: (objRow[0] or "").strip() if len(objRow) >= 1 else "")
+    objDataRows.sort(key=lambda objRow: int((objRow[0] or "").strip()) if len(objRow) >= 1 and (objRow[0] or "").strip().isdigit() else 10 ** 18)
 
     objOutputRows: List[List[str]] = [objHeaderRow] + objDataRows
     objOutputPath: Path = build_new_rawdata_step0003_name_mapping_sorted_output_path(objStep0003NameMappingPath)
