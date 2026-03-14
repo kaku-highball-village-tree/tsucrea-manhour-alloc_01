@@ -719,10 +719,10 @@ def build_new_rawdata_step0003_name_mapping_sorted_output_path(objStep0003NameMa
 
 def build_new_rawdata_step0003_old_current_name_mapping_output_path(objStep0003NameMappingPath: Path) -> Path:
     pszFileName: str = objStep0003NameMappingPath.name
-    pszSuffix: str = "_工数の姓_給与の姓_対応表.tsv"
+    pszSuffix: str = "_工数の姓_給与の姓_対応表_昇順.tsv"
     if not pszFileName.endswith(pszSuffix):
-        raise ValueError(f"Input is not step0003 name mapping file: {objStep0003NameMappingPath}")
-    pszOutputFileName: str = pszFileName[: -len(pszSuffix)] + "_旧姓_現在の姓_対応表.tsv"
+        raise ValueError(f"Input is not step0003 name mapping sorted file: {objStep0003NameMappingPath}")
+    pszOutputFileName: str = pszFileName[: -len(pszSuffix)] + "_旧姓_現在の姓_対応表_昇順.tsv"
     return objStep0003NameMappingPath.resolve().parent / pszOutputFileName
 
 
@@ -805,7 +805,8 @@ def process_salary_step0001_for_step0003_old_new_name_mapping(
     objOutputPath: Path = build_new_rawdata_step0003_name_mapping_output_path(objNewRawdataStep0003Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(objOutputPath)
-    process_new_rawdata_step0003_old_current_name_mapping(objOutputPath)
+    objSortedOutputPath: Path = build_new_rawdata_step0003_name_mapping_sorted_output_path(objOutputPath)
+    process_new_rawdata_step0003_old_current_name_mapping(objSortedOutputPath)
     return 0
 
 
