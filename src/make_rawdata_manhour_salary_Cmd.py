@@ -17,6 +17,7 @@ NEW_RAWDATA_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデ
 NEW_RAWDATA_STEP0002_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0002_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0003_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0003_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0004_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0004_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0005_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0005_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -493,6 +494,73 @@ def process_new_rawdata_step0005_from_step0004(
     return 0
 
 
+def build_new_rawdata_step0006_output_path_from_step0005(objStep0005Path: Path) -> Path:
+    pszFileName: str = objStep0005Path.name
+    if "_step0005_" not in pszFileName:
+        raise ValueError(f"Input is not step0005 file: {objStep0005Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0005_", "_step0006_", 1)
+    return objStep0005Path.resolve().parent / pszOutputFileName
+
+
+def process_new_rawdata_step0006_from_step0005(
+    objNewRawdataStep0005Path: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0005Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0005Path}")
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objInputRows]
+
+    iRowIndex: int = 0
+    while iRowIndex < len(objOutputRows):
+        objRow: List[str] = objOutputRows[iRowIndex]
+        if len(objRow) < 4:
+            iRowIndex += 1
+            continue
+
+        pszStaffName: str = (objRow[3] or "").strip()
+        if pszStaffName == "":
+            iRowIndex += 1
+            continue
+
+        pszStaffCode: str = (objRow[2] or "").strip() if len(objRow) >= 3 else ""
+        pszProjectName: str = objRow[4] if len(objRow) >= 5 else ""
+        pszManhour: str = objRow[5] if len(objRow) >= 6 else ""
+
+        while len(objRow) < 6:
+            objRow.append("")
+
+        objRow[4] = "合計"
+        objRow[5] = ""
+
+        iTargetIndex: int | None = None
+        iNextIndex: int = iRowIndex + 1
+        if iNextIndex < len(objOutputRows):
+            objNextRow: List[str] = objOutputRows[iNextIndex]
+            pszNextName: str = (objNextRow[3] or "").strip() if len(objNextRow) >= 4 else ""
+            if pszNextName == "":
+                iTargetIndex = iNextIndex
+
+        if iTargetIndex is None:
+            objNewDetailRow: List[str] = [""] * max(len(objRow), 6)
+            objOutputRows.insert(iRowIndex + 1, objNewDetailRow)
+            iTargetIndex = iRowIndex + 1
+
+        objTargetRow: List[str] = objOutputRows[iTargetIndex]
+        while len(objTargetRow) < 6:
+            objTargetRow.append("")
+
+        objTargetRow[2] = pszStaffCode
+        objTargetRow[4] = pszProjectName
+        objTargetRow[5] = pszManhour
+
+        iRowIndex += 1
+
+    objOutputPath: Path = build_new_rawdata_step0006_output_path_from_step0005(objNewRawdataStep0005Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
     objNewRawdataStep0002Path: Path,
     objStaffCodeByName: dict[str, str],
@@ -956,6 +1024,7 @@ def main() -> int:
     objNewRawdataStep0002Paths: List[Path] = []
     objNewRawdataStep0003Paths: List[Path] = []
     objNewRawdataStep0004Paths: List[Path] = []
+    objNewRawdataStep0005Paths: List[Path] = []
     objManagementAccountingCandidatePaths: List[Path] = []
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
         try:
@@ -973,6 +1042,8 @@ def main() -> int:
             objNewRawdataStep0003Paths.append(objResolvedInputPath)
         if NEW_RAWDATA_STEP0004_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
             objNewRawdataStep0004Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0005_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0005Paths.append(objResolvedInputPath)
 
         if objResolvedInputPath.suffix.lower() in (".tsv", ".csv", ".xlsx"):
             objManagementAccountingCandidatePaths.append(objResolvedInputPath)
@@ -1030,6 +1101,11 @@ def main() -> int:
                             objNewRawdataStep0003Path
                         )
                         process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
+                        objNewRawdataStep0005Path: Path = build_new_rawdata_step0005_output_path_from_step0004(
+                            objNewRawdataStep0004Path
+                        )
+                        process_new_rawdata_step0006_from_step0005(objNewRawdataStep0005Path)
+                        objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
                         objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
                         objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
                         objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
@@ -1054,8 +1130,13 @@ def main() -> int:
                     objNewRawdataStep0003Path
                 )
                 process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
+                objNewRawdataStep0005Path: Path = build_new_rawdata_step0005_output_path_from_step0004(
+                    objNewRawdataStep0004Path
+                )
+                process_new_rawdata_step0006_from_step0005(objNewRawdataStep0005Path)
                 objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
                 objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
+                objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
             except Exception as objException:
                 print(
                     "Error: failed to process step0004 from step0003: {0}. Detail = {1}".format(
@@ -1071,11 +1152,32 @@ def main() -> int:
                 continue
             try:
                 process_new_rawdata_step0005_from_step0004(objNewRawdataStep0004Path)
+                objNewRawdataStep0005Path: Path = build_new_rawdata_step0005_output_path_from_step0004(
+                    objNewRawdataStep0004Path
+                )
+                process_new_rawdata_step0006_from_step0005(objNewRawdataStep0005Path)
                 objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
+                objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
             except Exception as objException:
                 print(
                     "Error: failed to process step0005 from step0004: {0}. Detail = {1}".format(
                         objNewRawdataStep0004Path,
+                        objException,
+                    )
+                )
+                iExitCode = 1
+
+    if objNewRawdataStep0005Paths:
+        for objNewRawdataStep0005Path in objNewRawdataStep0005Paths:
+            if objNewRawdataStep0005Path.resolve() in objHandledInputPaths:
+                continue
+            try:
+                process_new_rawdata_step0006_from_step0005(objNewRawdataStep0005Path)
+                objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
+            except Exception as objException:
+                print(
+                    "Error: failed to process step0006 from step0005: {0}. Detail = {1}".format(
+                        objNewRawdataStep0005Path,
                         objException,
                     )
                 )
