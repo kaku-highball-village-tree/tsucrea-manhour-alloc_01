@@ -717,6 +717,47 @@ def build_new_rawdata_step0003_name_mapping_sorted_output_path(objStep0003NameMa
     return objStep0003NameMappingPath.resolve().parent / pszOutputFileName
 
 
+def build_new_rawdata_step0003_old_current_name_mapping_output_path(objStep0003NameMappingPath: Path) -> Path:
+    pszFileName: str = objStep0003NameMappingPath.name
+    pszSuffix: str = "_工数の姓_給与の姓_対応表.tsv"
+    if not pszFileName.endswith(pszSuffix):
+        raise ValueError(f"Input is not step0003 name mapping file: {objStep0003NameMappingPath}")
+    pszOutputFileName: str = pszFileName[: -len(pszSuffix)] + "_旧姓_現在の姓_対応表.tsv"
+    return objStep0003NameMappingPath.resolve().parent / pszOutputFileName
+
+
+def extract_surname_from_full_name(pszFullName: str) -> str:
+    pszName: str = (pszFullName or "").strip()
+    if pszName == "":
+        return ""
+    objParts: List[str] = re.split(r"[\s　]+", pszName)
+    if not objParts:
+        return ""
+    return objParts[0]
+
+
+def process_new_rawdata_step0003_old_current_name_mapping(
+    objStep0003NameMappingPath: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objStep0003NameMappingPath)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objStep0003NameMappingPath}")
+
+    objOutputRows: List[List[str]] = [list(objInputRows[0])]
+    for objRow in objInputRows[1:]:
+        pszManhourName: str = (objRow[1] or "").strip() if len(objRow) >= 2 else ""
+        pszSalaryName: str = (objRow[2] or "").strip() if len(objRow) >= 3 else ""
+        pszManhourSurname: str = extract_surname_from_full_name(pszManhourName)
+        pszSalarySurname: str = extract_surname_from_full_name(pszSalaryName)
+        if pszManhourSurname == pszSalarySurname:
+            continue
+        objOutputRows.append(list(objRow))
+
+    objOutputPath: Path = build_new_rawdata_step0003_old_current_name_mapping_output_path(objStep0003NameMappingPath)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
 def process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(
     objStep0003NameMappingPath: Path,
 ) -> int:
@@ -764,6 +805,7 @@ def process_salary_step0001_for_step0003_old_new_name_mapping(
     objOutputPath: Path = build_new_rawdata_step0003_name_mapping_output_path(objNewRawdataStep0003Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     process_new_rawdata_step0003_name_mapping_sorted_by_staff_code(objOutputPath)
+    process_new_rawdata_step0003_old_current_name_mapping(objOutputPath)
     return 0
 
 
